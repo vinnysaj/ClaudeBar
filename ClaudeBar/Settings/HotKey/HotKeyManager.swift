@@ -45,17 +45,8 @@ final class HotKeyManager {
     // MARK: - Persistence
 
     static var saved: KeyCombo? {
-        get {
-            guard let data = UserDefaults.standard.data(forKey: Self.defaultsKey) else { return nil }
-            return try? JSONDecoder().decode(KeyCombo.self, from: data)
-        }
-        set {
-            guard let newValue, let data = try? JSONEncoder().encode(newValue) else {
-                UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
-                return
-            }
-            UserDefaults.standard.set(data, forKey: Self.defaultsKey)
-        }
+        get { Preferences.read(KeyCombo.self, key: Self.defaultsKey) }
+        set { Preferences.write(newValue, key: Self.defaultsKey) }
     }
 
     // MARK: - Registration
