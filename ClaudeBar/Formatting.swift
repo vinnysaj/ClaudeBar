@@ -25,7 +25,7 @@ enum Formatting {
 
     static func resetDescription(from date: Date) -> String {
         let now = Date()
-        guard date > now else { return "Resets soon" }
+        guard date > now else { return "Just reset" }
 
         let calendar = Calendar.current
         let timeFormatter = DateFormatter()

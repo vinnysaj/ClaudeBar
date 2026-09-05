@@ -6,6 +6,13 @@ struct UsageMetric: Sendable, Codable {
     let resetsAt: Date?
     let spentDescription: String?
     let isUnlimited: Bool
+
+    /// Usage as it stands now. A window whose reset time has passed is empty even
+    /// though the last fetch still says otherwise; the next fetch confirms it.
+    func effectiveUsedPercent(at now: Date) -> Int {
+        if let resetsAt = self.resetsAt, resetsAt <= now { return 0 }
+        return self.usedPercent
+    }
 }
 
 struct CostSnapshot: Sendable, Codable {
@@ -45,6 +52,15 @@ struct AccountUsage: Sendable, Codable {
     var fable: UsageMetric?
     var extraUsage: UsageMetric?
     var fetchedAt: Date
+
+    /// A limit window rolled over after this was fetched, so its cached figures
+    /// are wrong no matter how recent the fetch.
+    func hasWindowResetSinceFetch(now: Date) -> Bool {
+        [self.session, self.weekly, self.fable].contains { metric in
+            guard let resetsAt = metric?.resetsAt else { return false }
+            return resetsAt > self.fetchedAt && resetsAt <= now
+        }
+    }
 }
 
 /// Persisted usage cache (Caches/ClaudeBar/usage-cache-v2.json).

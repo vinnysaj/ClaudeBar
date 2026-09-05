@@ -98,9 +98,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             self.setIcon(sessionUsed: nil, weeklyUsed: nil, stale: true)
             return
         }
+        let now = Date()
         self.setIcon(
-            sessionUsed: usage.session.map { Double($0.usedPercent) },
-            weeklyUsed: usage.weekly.map { Double($0.usedPercent) },
+            sessionUsed: usage.session.map { Double($0.effectiveUsedPercent(at: now)) },
+            weeklyUsed: usage.weekly.map { Double($0.effectiveUsedPercent(at: now)) },
             stale: active.isStale)
     }
 

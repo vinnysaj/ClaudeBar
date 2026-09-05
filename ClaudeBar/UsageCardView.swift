@@ -337,12 +337,13 @@ struct CompactMetricLine: View {
                     .foregroundStyle(.secondary)
                 Spacer()
             } else if let metric {
+                let percent = metric.effectiveUsedPercent(at: Date())
                 UsageProgressBar(
-                    percent: metric.usedPercent,
-                    tintColor: UsageCardView.barColor(for: metric.usedPercent))
+                    percent: percent,
+                    tintColor: UsageCardView.barColor(for: percent))
                     .frame(height: 5)
                     .opacity(self.stale ? 0.5 : 1)
-                Text("\(metric.usedPercent)%")
+                Text("\(percent)%")
                     .font(.system(size: 10))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
