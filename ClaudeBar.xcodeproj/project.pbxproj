@@ -72,13 +72,11 @@
 				B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */,
 				1AC9AD88B82AC5CEC3672AB5 /* CostScanner.swift */,
 				70C6DCEB5BB23BA7D1AC95F4 /* Formatting.swift */,
-				F1A2B3C4D5E6071829300002 /* HotKeyManager.swift */,
 				285790D7C7E97AC740DBBF51 /* IconRenderer.swift */,
 				5B2C3D4E5F60718293A4B5C6 /* KeychainStore.swift */,
 				E389EF73BF226A5B46A7D42A /* Models.swift */,
 				D2E3F405162738495A6B7C8D /* PricingTable.swift */,
-				F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */,
-				F1A2B3C4D5E6071829300004 /* ShortcutRecorder.swift */,
+				F1A2B3C4D5E607182930000C /* Settings */,
 				E3FD5A6CF390B4AC977EB9ED /* StatusItemController.swift */,
 				F1A2B3C4D5E607182930000A /* Styles */,
 				BF7ABDDDCD6098692FD940E4 /* UsageCardView.swift */,
@@ -100,6 +98,24 @@
 				F1A2B3C4D5E6071829300008 /* HoverBackgroundButtonStyle.swift */,
 			);
 			path = ButtonStyles;
+			sourceTree = "<group>";
+		};
+		F1A2B3C4D5E607182930000C /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				F1A2B3C4D5E607182930000D /* HotKey */,
+				F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		F1A2B3C4D5E607182930000D /* HotKey */ = {
+			isa = PBXGroup;
+			children = (
+				F1A2B3C4D5E6071829300002 /* HotKeyManager.swift */,
+				F1A2B3C4D5E6071829300004 /* ShortcutRecorder.swift */,
+			);
+			path = HotKey;
 			sourceTree = "<group>";
 		};
 		D8FCABBFB54A4EE1B4A360FF = {
