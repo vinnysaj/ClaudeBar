@@ -5,6 +5,7 @@ struct UsageCardView: View {
     let scanProgress: ScanProgress?
     let isRefreshing: Bool
     let launchAtLogin: Bool
+    let autoSwitchEnabled: Bool
     let onToggleLaunchAtLogin: () -> Void
     let onRefresh: () -> Void
     let onSwitch: (String) -> Void
@@ -85,6 +86,7 @@ struct UsageCardView: View {
                 AccountRow(
                     display: display,
                     showBadges: snapshot.displays.count > 1,
+                    autoSwitchEnabled: self.autoSwitchEnabled,
                     onSwitch: { self.onSwitch(display.id) },
                     onRemove: { self.onRemove(display.id, display.account.email) })
                 if display.id != snapshot.displays.last?.id {
@@ -230,6 +232,7 @@ struct BannerView: View {
 struct AccountRow: View {
     let display: AccountDisplay
     let showBadges: Bool
+    let autoSwitchEnabled: Bool
     let onSwitch: () -> Void
     let onRemove: () -> Void
 
@@ -244,6 +247,10 @@ struct AccountRow: View {
                     .truncationMode(.middle)
                 if self.display.isActive {
                     BadgeView(text: "Active", color: Color(nsColor: .controlAccentColor))
+                    if self.autoSwitchEnabled && self.showBadges {
+                        BadgeView(text: "Auto", color: .green)
+                            .help("Switches to the \"Next\" account before this one hits its session limit")
+                    }
                 } else if self.showBadges && self.display.isRecommended {
                     BadgeView(text: "Next", color: .green)
                 }

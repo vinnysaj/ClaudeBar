@@ -28,12 +28,14 @@ actor AccountManager {
     private var rosterLoadError: KeychainError?
     private static let liveBlobCacheTTL: TimeInterval = 5
 
-    /// Usage is refetched per account at most this often — including across
-    /// restarts, since fetch times persist with the usage cache.
-    private static let usageRefreshInterval: TimeInterval = 15 * 60
-    /// Rendered as stale (dimmed) when older than this; slightly beyond the
-    /// refresh interval so rows don't flicker stale right before a refetch.
-    private static let usageStaleDisplayInterval: TimeInterval = 20 * 60
+    /// Usage is refetched per account at most every `settings.refreshInterval`
+    /// — including across restarts, since fetch times persist with the cache.
+    private var settings: UsageSettings
+    private var rateTracker = UsageRateTracker()
+    private var lastManualSwitchAt: Date?
+    /// Rendered as stale (dimmed) when older than this; enough beyond the refresh
+    /// interval that rows don't flicker stale right before a refetch.
+    private var usageStaleDisplayInterval: TimeInterval { self.settings.refreshInterval + 5 * 60 }
     private static let pendingAddDuration: TimeInterval = 10 * 60
     private static let expiryRefreshMargin: TimeInterval = 5 * 60
     private static let clobberWindow: TimeInterval = 10 * 60
@@ -42,30 +44,14 @@ actor AccountManager {
     init() {
         self.state = Self.loadState()
         self.cache = Self.loadCache()
+        self.settings = UsageSettings.saved
     }
 
     // MARK: - Snapshot for UI
 
     func snapshot() -> AccountsSnapshot {
         let now = Date()
-        let ordered = self.state.accounts.sorted { $0.displayOrder < $1.displayOrder }
-        let recommendedId = ordered.count > 1
-            ? Self.recommendedAccountId(accounts: ordered, usageByAccount: self.cache.usageByAccount)
-            : nil
-
-        let displays = ordered.map { account -> AccountDisplay in
-            let usage = self.cache.usageByAccount[account.id]
-            let isActive = account.id == self.state.activeAccountUuid
-            let isStale = usage.map {
-                now.timeIntervalSince($0.fetchedAt) > Self.usageStaleDisplayInterval
-            } ?? true
-            return AccountDisplay(
-                account: account,
-                usage: usage,
-                isActive: isActive,
-                isRecommended: account.id == recommendedId,
-                isStale: isStale)
-        }
+        let displays = self.displays(now: now)
 
         if let expiresAt = self.infoBannerExpiresAt, expiresAt < now {
             self.infoBanner = nil
@@ -87,6 +73,30 @@ actor AccountManager {
     var isPendingAdd: Bool {
         guard let until = self.pendingAddUntil else { return false }
         return until > Date()
+    }
+
+    /// One row per account, in display order, with the "Next" badge on the
+    /// account auto-switching would move to first.
+    private func displays(now: Date) -> [AccountDisplay] {
+        let ordered = self.state.accounts.sorted { $0.displayOrder < $1.displayOrder }
+        var displays = ordered.map { account -> AccountDisplay in
+            let usage = self.cache.usageByAccount[account.id]
+            let isStale = usage.map {
+                now.timeIntervalSince($0.fetchedAt) > self.usageStaleDisplayInterval
+            } ?? true
+            return AccountDisplay(
+                account: account,
+                usage: usage,
+                isActive: account.id == self.state.activeAccountUuid,
+                isRecommended: false,
+                isStale: isStale)
+        }
+        let recommendedId = AutoSwitchPlanner.rankedCandidates(
+            displays, threshold: self.settings.switchAtSessionPercent, now: now).first?.id
+        if let index = displays.firstIndex(where: { $0.id == recommendedId }) {
+            displays[index].isRecommended = true
+        }
+        return displays
     }
 
     // MARK: - Reconcile
@@ -280,12 +290,13 @@ actor AccountManager {
     /// Swaps the live credential item to `target`. Returns false (with a banner)
     /// when the switch could not complete.
     @discardableResult
-    func switchTo(accountUuid target: String) async -> Bool {
+    func switchTo(accountUuid target: String, trigger: SwitchTrigger = .user) async -> Bool {
         await self.reconcile()
 
         guard let index = self.state.accounts.firstIndex(where: { $0.id == target }) else { return false }
         if self.state.activeAccountUuid == target { return true }
         let email = self.state.accounts[index].email
+        let previousEmail = self.state.accounts.first(where: { $0.id == self.state.activeAccountUuid })?.email
 
         var blob: Data
         do {
@@ -353,10 +364,17 @@ actor AccountManager {
         self.state.activeAccountUuid = target
         self.clobberRepairsByUuid = [:]
         self.errorBanner = nil
-        self.infoBanner = Banner(
-            kind: .info,
-            message: "Switched to \(email).")
-        self.infoBannerExpiresAt = Date().addingTimeInterval(2 * 60)
+        switch trigger {
+        case .user:
+            self.lastManualSwitchAt = Date()
+            self.infoBanner = Banner(kind: .info, message: "Switched to \(email).")
+            self.infoBannerExpiresAt = Date().addingTimeInterval(2 * 60)
+        case .automatic(let reason):
+            self.infoBanner = Banner(
+                kind: .info,
+                message: "Switched to \(email) automatically: \(previousEmail ?? "the previous account") \(reason).")
+            self.infoBannerExpiresAt = Date().addingTimeInterval(10 * 60)
+        }
         self.saveState()
 
         await self.reconcile()
@@ -382,18 +400,58 @@ actor AccountManager {
         self.state.accounts.remove(at: index)
         self.cache.usageByAccount.removeValue(forKey: accountUuid)
         self.clobberRepairsByUuid.removeValue(forKey: accountUuid)
+        self.rateTracker.forget(accountId: accountUuid)
         self.saveState()
         self.saveCache()
         return true
     }
 
+    // MARK: - Auto-switch
+
+    func apply(settings: UsageSettings) {
+        self.settings = settings
+    }
+
+    /// Moves the live login off an account that is at, or racing toward, its
+    /// limits. Runs after every usage refresh; the planner decides.
+    func autoSwitchIfNeeded() async {
+        guard self.settings.autoSwitchEnabled, !self.isPendingAdd else { return }
+        let now = Date()
+        let displays = self.displays(now: now)
+        let rate = self.state.activeAccountUuid.flatMap {
+            self.rateTracker.percentPerHour(for: $0, at: now)
+        }
+        let decision = AutoSwitchPlanner.decide(
+            displays: displays,
+            settings: self.settings,
+            activeRatePercentPerHour: rate,
+            lastManualSwitchAt: self.lastManualSwitchAt,
+            now: now)
+
+        switch decision {
+        case .stay:
+            return
+        case .noCandidate(let reason):
+            let activeEmail = displays.first(where: \.isActive)?.account.email ?? "The active account"
+            self.infoBanner = Banner(
+                kind: .warning,
+                message: "\(activeEmail) \(reason), but every other account is near its limit too.")
+            self.infoBannerExpiresAt = now.addingTimeInterval(5 * 60)
+        case .switchTo(let accountId, let reason):
+            self.logger.info("Auto-switching: \(reason, privacy: .public)")
+            guard await self.switchTo(accountUuid: accountId, trigger: .automatic(reason: reason)),
+                  let account = self.state.accounts.first(where: { $0.id == accountId })
+            else { return }
+            // The new account's figures drive the next decision; don't wait a cycle.
+            await self.fetchUsage(for: account, isActive: true)
+            self.saveCache()
+        }
+    }
+
     // MARK: - Usage fetching
 
-    /// Fetches usage for stale accounts, active first, sequentially with a ~1s
-    /// stagger — never parallel bursts against the API. Each account past the
-    /// first waits an extra minute per position (15, 16, 17, ... minutes), so
-    /// after the initial fetch the refreshes drift apart instead of always
-    /// landing in the same cycle.
+    /// Fetches usage for accounts that are due, active first, sequentially with
+    /// a ~1s stagger — never parallel bursts against the API.
     func refreshUsage(force: Bool = false) async {
         guard !self.isFetching else { return }
         self.isFetching = true
@@ -410,10 +468,9 @@ actor AccountManager {
         var fetchedAny = false
         for (position, account) in ordered.enumerated() {
             let isActive = account.id == self.state.activeAccountUuid
-            let interval = Self.usageRefreshInterval + TimeInterval(position * 60)
             if !force,
                let cached = self.cache.usageByAccount[account.id],
-               now.timeIntervalSince(cached.fetchedAt) < interval
+               !self.isRefreshDue(for: account.id, cached: cached, isActive: isActive, position: position, now: now)
             {
                 continue
             }
@@ -428,6 +485,35 @@ actor AccountManager {
             self.saveCache()
             self.saveState()
         }
+    }
+
+    /// The active account follows the planner's schedule, which tightens as its
+    /// usage climbs; the others wait an extra minute per position so their
+    /// refreshes drift apart instead of landing in the same cycle. Any account is
+    /// due at once when one of its windows has reset since the last fetch.
+    private func isRefreshDue(
+        for accountId: String, cached: AccountUsage, isActive: Bool, position: Int, now: Date) -> Bool
+    {
+        if cached.hasWindowResetSinceFetch(now: now) { return true }
+        let interval: TimeInterval
+        if isActive {
+            interval = AutoSwitchPlanner.activeRefreshInterval(
+                sessionPercent: cached.session?.effectiveUsedPercent(at: now) ?? 0,
+                ratePercentPerHour: self.rateTracker.percentPerHour(for: accountId, at: now),
+                settings: self.settings)
+        } else {
+            interval = self.settings.refreshInterval + TimeInterval(position * 60)
+        }
+        return now.timeIntervalSince(cached.fetchedAt) >= interval
+    }
+
+    private func storeUsage(_ raw: OAuthUsage, for account: Account) {
+        let usage = Self.mapUsage(raw, fetchedAt: Date())
+        self.cache.usageByAccount[account.id] = usage
+        if let session = usage.session {
+            self.rateTracker.record(percent: session.usedPercent, for: account.id, at: usage.fetchedAt)
+        }
+        self.setNeedsRelogin(false, for: account.id)
     }
 
     private func fetchUsage(for account: Account, isActive: Bool) async {
@@ -461,15 +547,13 @@ actor AccountManager {
 
         do {
             let raw = try await AnthropicAPI.fetchUsage(accessToken: tokens.accessToken)
-            self.cache.usageByAccount[account.id] = Self.mapUsage(raw, fetchedAt: Date())
-            self.setNeedsRelogin(false, for: account.id)
+            self.storeUsage(raw, for: account)
         } catch APIError.unauthorized {
             switch await self.refreshTokens(blob: &blob, tokens: &tokens, for: account, isActive: isActive) {
             case .refreshed:
                 do {
                     let raw = try await AnthropicAPI.fetchUsage(accessToken: tokens.accessToken)
-                    self.cache.usageByAccount[account.id] = Self.mapUsage(raw, fetchedAt: Date())
-                    self.setNeedsRelogin(false, for: account.id)
+                    self.storeUsage(raw, for: account)
                 } catch APIError.unauthorized {
                     self.setNeedsRelogin(true, for: account.id)
                 } catch {
@@ -530,28 +614,6 @@ actor AccountManager {
     func recordCost(_ cost: CostSnapshot) {
         self.cache.cost = cost
         self.saveCache()
-    }
-
-    // MARK: - Recommendation
-
-    /// Among accounts with usage data that don't need a re-login, the soonest
-    /// weekly reset wins; weekly always dominates. Ties break on the soonest
-    /// session reset. Accounts with no weekly reset sort last.
-    static func recommendedAccountId(
-        accounts: [Account], usageByAccount: [String: AccountUsage]) -> String?
-    {
-        let farFuture = Date.distantFuture
-        let candidates = accounts.compactMap { account -> (id: String, weekly: Date, session: Date)? in
-            guard !account.needsRelogin, let usage = usageByAccount[account.id] else { return nil }
-            return (
-                id: account.id,
-                weekly: usage.weekly?.resetsAt ?? farFuture,
-                session: usage.session?.resetsAt ?? farFuture)
-        }
-        return candidates.min { lhs, rhs in
-            if lhs.weekly != rhs.weekly { return lhs.weekly < rhs.weekly }
-            return lhs.session < rhs.session
-        }?.id
     }
 
     // MARK: - Usage mapping

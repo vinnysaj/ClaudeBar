@@ -24,6 +24,9 @@
 		F1A2B3C4D5E6071829300005 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */; };
 		F1A2B3C4D5E6071829300007 /* HoverBackgroundButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300008 /* HoverBackgroundButtonStyle.swift */; };
 		F1A2B3C4D5E6071829300011 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300010 /* Preferences.swift */; };
+		F1A2B3C4D5E6071829300013 /* UsageSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300012 /* UsageSettings.swift */; };
+		F1A2B3C4D5E6071829300015 /* UsageRateTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300014 /* UsageRateTracker.swift */; };
+		F1A2B3C4D5E6071829300017 /* AutoSwitchPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300016 /* AutoSwitchPlanner.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +47,9 @@
 		E3FD5A6CF390B4AC977EB9ED /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6071829300008 /* HoverBackgroundButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoverBackgroundButtonStyle.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6071829300010 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6071829300012 /* UsageSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSettings.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6071829300014 /* UsageRateTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageRateTracker.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6071829300016 /* AutoSwitchPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSwitchPlanner.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,11 +111,22 @@
 		F1A2B3C4D5E607182930000C /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				F1A2B3C4D5E6071829300018 /* AutoSwitch */,
 				F1A2B3C4D5E607182930000D /* HotKey */,
 				F1A2B3C4D5E6071829300010 /* Preferences.swift */,
 				F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */,
 			);
 			path = Settings;
+			sourceTree = "<group>";
+		};
+		F1A2B3C4D5E6071829300018 /* AutoSwitch */ = {
+			isa = PBXGroup;
+			children = (
+				F1A2B3C4D5E6071829300016 /* AutoSwitchPlanner.swift */,
+				F1A2B3C4D5E6071829300014 /* UsageRateTracker.swift */,
+				F1A2B3C4D5E6071829300012 /* UsageSettings.swift */,
+			);
+			path = AutoSwitch;
 			sourceTree = "<group>";
 		};
 		F1A2B3C4D5E607182930000D /* HotKey */ = {
@@ -208,6 +225,9 @@
 				F1A2B3C4D5E6071829300005 /* SettingsWindow.swift in Sources */,
 				F1A2B3C4D5E6071829300007 /* HoverBackgroundButtonStyle.swift in Sources */,
 				F1A2B3C4D5E6071829300011 /* Preferences.swift in Sources */,
+				F1A2B3C4D5E6071829300013 /* UsageSettings.swift in Sources */,
+				F1A2B3C4D5E6071829300015 /* UsageRateTracker.swift in Sources */,
+				F1A2B3C4D5E6071829300017 /* AutoSwitchPlanner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

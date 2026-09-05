@@ -14,6 +14,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var lastCostScanAt: Date?
     private let onCheckForUpdates: (() -> Void)?
     private let hotKeys = HotKeyManager()
+    private var usageSettings = UsageSettings.saved
 
     private static let costScanInterval: TimeInterval = 15 * 60
 
@@ -53,6 +54,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             scanProgress: self.scanProgress,
             isRefreshing: self.isRefreshing,
             launchAtLogin: SMAppService.mainApp.status == .enabled,
+            autoSwitchEnabled: self.usageSettings.autoSwitchEnabled,
             onToggleLaunchAtLogin: { [weak self] in Task { self?.toggleLaunchAtLogin() } },
             onRefresh: { [weak self] in Task { await self?.fetchAndUpdate(force: true) } },
             onSwitch: { [weak self] accountUuid in Task { await self?.switchTo(accountUuid) } },
@@ -134,6 +136,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         await AccountManager.shared.reconcile()
         await AccountManager.shared.refreshUsage(force: force)
+        await AccountManager.shared.autoSwitchIfNeeded()
         await self.refreshSnapshot()
 
         let costIsDue = self.lastCostScanAt.map {
@@ -278,8 +281,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // The panel is a menu with a tracking loop; left up, the window opens
         // behind it and the shortcut recorder never sees a keystroke.
         self.menu.cancelTracking()
-        SettingsWindowController.shared.show { [weak self] combo in
-            self?.applyHotKey(combo)
+        SettingsWindowController.shared.show(handlers: SettingsHandlers(
+            applyCombo: { [weak self] combo in self?.applyHotKey(combo) },
+            applyUsageSettings: { [weak self] settings in self?.applyUsageSettings(settings) }))
+    }
+
+    private func applyUsageSettings(_ settings: UsageSettings) {
+        self.usageSettings = settings
+        UsageSettings.saved = settings
+        self.rebuildMenu()
+        Task { [weak self] in
+            await AccountManager.shared.apply(settings: settings)
+            await self?.refreshSnapshot()
         }
     }
 

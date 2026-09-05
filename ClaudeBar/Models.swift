@@ -76,7 +76,7 @@ struct AccountDisplay: Sendable, Identifiable {
     let account: Account
     let usage: AccountUsage?
     let isActive: Bool
-    let isRecommended: Bool
+    var isRecommended: Bool
     let isStale: Bool
 
     var id: String { self.account.id }
@@ -101,6 +101,13 @@ struct KeyCombo: Sendable, Codable, Equatable {
     /// 15.2 relaxed that again, so hardcoding the rule here would be wrong on one
     /// version or the other.
     var hasModifier: Bool { self.modifiers != 0 }
+}
+
+/// Why the live login moved to another account.
+enum SwitchTrigger: Sendable {
+    case user
+    /// Auto-switching, with the condition on the previous account that caused it.
+    case automatic(reason: String)
 }
 
 enum BannerKind: Sendable {
