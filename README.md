@@ -8,6 +8,7 @@ A macOS menu-bar app for tracking Claude Code usage across multiple Anthropic ac
 - A "Next" badge recommends the account whose weekly limit resets soonest (never switches automatically)
 - Usage comes straight from Anthropic's OAuth endpoints — no CLI processes are spawned
 - Past sessions are indexed locally and scanned for estimated costs
+- A global keyboard shortcut shows or hides the panel from any app; set it from the gear icon in the panel
 
 ## Installation
 

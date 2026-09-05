@@ -2,7 +2,13 @@ import SwiftUI
 
 /// A borderless button that fills a rounded chip behind its label on hover.
 struct HoverBackgroundButtonStyle: ButtonStyle {
-    var padding = EdgeInsets(top: 3, leading: 6, bottom: 3, trailing: 6)
+    /// Horizontal room the chip adds around a text label. A button that should sit
+    /// flush with an edge pulls itself back by this much.
+    static let textInset: CGFloat = 6
+    /// The same for a bare glyph, which needs less breathing room than a word.
+    static let iconInset: CGFloat = 4
+
+    var padding = EdgeInsets(top: 3, leading: Self.textInset, bottom: 3, trailing: Self.textInset)
     var cornerRadius: CGFloat = 5
 
     func makeBody(configuration: Configuration) -> some View {
@@ -39,10 +45,11 @@ extension ButtonStyle where Self == HoverBackgroundButtonStyle {
     /// Text buttons.
     static var hoverBackground: HoverBackgroundButtonStyle { HoverBackgroundButtonStyle() }
 
-    /// Icon buttons: a tighter chip, since a glyph needs less breathing room than a word.
+    /// Icon buttons: a tighter chip.
     static var hoverBackgroundIcon: HoverBackgroundButtonStyle {
         HoverBackgroundButtonStyle(
-            padding: EdgeInsets(top: 3, leading: 4, bottom: 3, trailing: 4),
+            padding: EdgeInsets(
+                top: 3, leading: Self.iconInset, bottom: 3, trailing: Self.iconInset),
             cornerRadius: 4)
     }
 }

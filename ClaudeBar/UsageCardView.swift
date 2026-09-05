@@ -68,7 +68,7 @@ struct UsageCardView: View {
                     .buttonStyle(.hoverBackgroundIcon)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .padding(.trailing, -4)
+                    .padding(.trailing, -HoverBackgroundButtonStyle.iconInset)
             }
             if let updatedAt = self.snapshot?.updatedAt {
                 Text("Updated \(Formatting.timeAgo(from: updatedAt))")
@@ -182,7 +182,7 @@ struct UsageCardView: View {
                     .buttonStyle(.hoverBackground)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .padding(.trailing, -6)
+                    .padding(.trailing, -HoverBackgroundButtonStyle.textInset)
             }
             if let onCheckForUpdates = self.onCheckForUpdates {
                 HStack {
@@ -194,7 +194,7 @@ struct UsageCardView: View {
                         .buttonStyle(.hoverBackground)
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
-                        .padding(.trailing, -6)
+                        .padding(.trailing, -HoverBackgroundButtonStyle.textInset)
                 }
             }
         }
@@ -391,7 +391,7 @@ struct PendingAddRow: View {
                 .buttonStyle(.hoverBackground)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
-                .padding(.leading, -6)
+                .padding(.leading, -HoverBackgroundButtonStyle.textInset)
         }
     }
 }
