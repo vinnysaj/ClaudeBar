@@ -14,7 +14,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var lastCostScanAt: Date?
     private let onCheckForUpdates: (() -> Void)?
     private let hotKeys = HotKeyManager()
-    private var menuIsOpen = false
 
     private static let costScanInterval: TimeInterval = 15 * 60
 
@@ -33,12 +32,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.rebuildMenu()
         self.startPolling()
 
-        self.hotKeys.onFire = { [weak self] in self?.togglePanel() }
+        self.hotKeys.onFire = { [weak self] in self?.openPanel() }
         if let saved = HotKeyManager.saved {
-            // A combo the OS now refuses (a newly conflicting app, or Sequoia's
-            // modifier rule after an upgrade) leaves the shortcut inert; Settings
-            // reports the reason when the user next records one.
-            try? self.hotKeys.register(saved)
+            do {
+                try self.hotKeys.register(saved)
+            } catch {
+                // A combo the OS now refuses (a newly conflicting app, or Sequoia's
+                // modifier rule after an upgrade) leaves the shortcut inert; Settings
+                // reports the reason when the user next records one.
+                NSLog("Couldn't register saved hotkey \(saved.displayString): \(error)")
+            }
         }
     }
 
@@ -242,7 +245,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     nonisolated func menuWillOpen(_ menu: NSMenu) {
         MainActor.assumeIsolated {
-            self.menuIsOpen = true
             self.hotKeys.suspend()
 
             self.rebuildMenu()
@@ -255,19 +257,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     nonisolated func menuDidClose(_ menu: NSMenu) {
         MainActor.assumeIsolated {
-            self.menuIsOpen = false
             self.hotKeys.resume()
         }
     }
 
     // MARK: - Hotkey
 
-    private func togglePanel() {
-        if self.menuIsOpen {
-            self.menu.cancelTracking()
-        } else {
-            self.statusItem.button?.performClick(nil)
-        }
+    /// The hotkey only ever opens: it is suspended while the menu is up, and the
+    /// menu item's key equivalent handles the closing press.
+    private func openPanel() {
+        self.statusItem.button?.performClick(nil)
     }
 
     /// Reaching this method means the menu already dismissed itself by selecting the
@@ -275,6 +274,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func dismissViaKeyEquivalent() {}
 
     private func openSettings() {
+        // The panel is a menu with a tracking loop; left up, the window opens
+        // behind it and the shortcut recorder never sees a keystroke.
+        self.menu.cancelTracking()
         SettingsWindowController.shared.show { [weak self] combo in
             self?.applyHotKey(combo)
         }
@@ -292,6 +294,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             HotKeyManager.saved = combo
             return nil
         } catch let error as HotKeyManager.RegistrationError {
+            if self.hotKeys.combo != nil {
+                return "\(error.description) The previous shortcut is still active."
+            }
             return error.description
         } catch {
             return "Couldn't register that shortcut."

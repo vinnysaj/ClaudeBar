@@ -62,9 +62,13 @@ final class HotKeyManager {
 
     func register(_ combo: KeyCombo) throws {
         guard combo.hasModifier else { throw RegistrationError.noModifier }
-        self.releaseHotKey()
+        if combo == self.combo, self.hotKeyRef != nil { return }
         try self.installHandlerIfNeeded()
-        try self.claim(combo)
+        // Claim the new combo before letting go of the old one, so a combo the OS
+        // refuses leaves the existing shortcut working rather than nothing at all.
+        let ref = try self.claim(combo)
+        self.releaseHotKey()
+        self.hotKeyRef = ref
         self.combo = combo
     }
 
@@ -79,16 +83,21 @@ final class HotKeyManager {
     /// Carbon hotkey delivery: the press isn't discarded, it's *queued*, and lands
     /// the moment the menu closes — reopening the panel the user just dismissed.
     /// Unregistering for the duration means there is nothing to queue.
-    /// `StatusItemController` watches for the same combo with a local monitor instead.
+    /// `StatusItemController` gives its menu item the same combo as a key equivalent,
+    /// which is how the shortcut closes the panel.
     func suspend() {
         self.releaseHotKey()
     }
 
     func resume() {
         guard let combo = self.combo, self.hotKeyRef == nil else { return }
-        // A combo that registered once will almost always register again; if the OS
-        // refuses now, the shortcut is simply inert until Settings sets it again.
-        try? self.claim(combo)
+        do {
+            self.hotKeyRef = try self.claim(combo)
+        } catch {
+            // A combo that registered once will almost always register again; if the
+            // OS refuses now, the shortcut is inert until Settings sets it again.
+            NSLog("Couldn't re-register hotkey \(combo.displayString): \(error)")
+        }
     }
 
     // MARK: - Carbon plumbing
@@ -108,7 +117,7 @@ final class HotKeyManager {
         guard status == noErr else { throw RegistrationError.failed(status) }
     }
 
-    private func claim(_ combo: KeyCombo) throws {
+    private func claim(_ combo: KeyCombo) throws -> EventHotKeyRef {
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
             combo.keyCode,
@@ -120,7 +129,7 @@ final class HotKeyManager {
         guard status == noErr, let ref else {
             throw status == -9868 ? RegistrationError.rejectedModifiers : RegistrationError.failed(status)
         }
-        self.hotKeyRef = ref
+        return ref
     }
 
     private func releaseHotKey() {
