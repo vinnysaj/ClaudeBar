@@ -12,5 +12,10 @@ let package = Package(
                 .linkedFramework("AppKit"),
             ]
         ),
+        .testTarget(
+            name: "ClaudeBarTests",
+            dependencies: ["ClaudeBar"],
+            path: "Tests/ClaudeBarTests"
+        ),
     ]
 )
