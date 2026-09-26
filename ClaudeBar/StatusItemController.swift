@@ -64,10 +64,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         checkForUpdates: self.onCheckForUpdates,
         quit: { NSApplication.shared.terminate(nil) })
 
-    /// Lays the menu out as a header, the fleet forecast, one item per account,
-    /// and a footer. The fleet line and every account open a hover panel, which
-    /// AppKit only offers per item. Items are rebuilt only when the roster
-    /// changes: rebuilding closes whatever hover panel is open.
+    /// Lays the menu out as a header, one item per account, costs and pace, and
+    /// a footer. Every account and the costs open a hover panel, which AppKit
+    /// only offers per item. Items are rebuilt only when the roster changes:
+    /// rebuilding closes whatever hover panel is open.
     private func rebuildMenuIfNeeded() {
         let accountIds = self.model.snapshot?.displays.map(\.id) ?? []
         guard accountIds != self.builtAccountIds else { return }
@@ -82,13 +82,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.applyKeyEquivalent()
         self.menu.addItem(header)
 
-        if !accountIds.isEmpty {
-            let fleet = HostedMenuItem.make(width: width) { FleetStatusRow(model: self.model) }
-            fleet.submenu = HostedMenuItem.submenu(width: PanelLayout.detailWidth) {
-                FleetDetailView(model: self.model)
-            }
-            self.menu.addItem(fleet)
-        }
         for (index, accountId) in accountIds.enumerated() {
             let row = HostedMenuItem.make(width: width) {
                 AccountRow(accountId: accountId, showsDivider: index > 0, model: self.model, actions: self.actions)
@@ -98,6 +91,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
             self.menu.addItem(row)
         }
+
+        let costPace = HostedMenuItem.make(width: width) { CostPaceRow(model: self.model) }
+        costPace.submenu = HostedMenuItem.submenu(width: PanelLayout.detailWidth) {
+            CostPaceDetailView(model: self.model)
+        }
+        self.menu.addItem(costPace)
 
         self.menu.addItem(HostedMenuItem.make(width: width) {
             PanelFooterView(model: self.model, actions: self.actions)

@@ -89,7 +89,7 @@ struct PanelHeaderView: View {
     }
 }
 
-/// The pending-add hint, costs, and the app controls along the bottom.
+/// The pending-add hint and the app controls along the bottom.
 struct PanelFooterView: View {
     let model: PanelModel
     let actions: PanelActions
@@ -99,56 +99,11 @@ struct PanelFooterView: View {
             if self.model.snapshot?.isPendingAdd == true {
                 PendingAddRow(onCancel: self.actions.cancelAddAccount)
             }
-            if let snapshot = self.model.snapshot {
-                self.costOrScanSection(snapshot)
-            }
             Divider().padding(.vertical, 6)
             self.controls
         }
         .padding(.horizontal, PanelLayout.horizontalPadding)
         .padding(.bottom, 10)
-    }
-
-    @ViewBuilder
-    private func costOrScanSection(_ snapshot: AccountsSnapshot) -> some View {
-        if let cost = snapshot.cost, cost.todayTokens > 0 || cost.last30DaysTokens > 0 {
-            VStack(alignment: .leading, spacing: 4) {
-                Divider().padding(.vertical, 6)
-                Text("Cost")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("Today: \(Formatting.formatCost(cost.todayCostUSD)) \u{00B7} \(Formatting.formatTokens(cost.todayTokens)) tokens")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text("Last 30 days: \(Formatting.formatCost(cost.last30DaysCostUSD)) \u{00B7} \(Formatting.formatTokens(cost.last30DaysTokens)) tokens")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                if !cost.unpricedModels.isEmpty {
-                    Text("Totals exclude \(cost.unpricedModels.joined(separator: ", ")) \u{2014} no published rates yet")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        } else if let progress = self.model.scanProgress, !progress.isComplete {
-            VStack(alignment: .leading, spacing: 4) {
-                Divider().padding(.vertical, 6)
-                HStack(spacing: 6) {
-                    Spacer()
-                    Text("Scanning logs...")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    if progress.totalFiles > 0 {
-                        Text("\(progress.scannedFiles)/\(progress.totalFiles)")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                }
-                if progress.totalFiles > 0 {
-                    ScanProgressBar(fraction: progress.fraction)
-                }
-            }
-        }
     }
 
     private var controls: some View {
@@ -230,23 +185,6 @@ struct PendingAddRow: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, -HoverBackgroundButtonStyle.textInset)
         }
-    }
-}
-
-struct ScanProgressBar: View {
-    let fraction: Double
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.08))
-                Capsule()
-                    .fill(Color.secondary.opacity(0.4))
-                    .frame(width: max(0, geometry.size.width * CGFloat(min(self.fraction, 1))))
-            }
-        }
-        .frame(height: 3)
     }
 }
 

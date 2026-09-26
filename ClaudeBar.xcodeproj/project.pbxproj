@@ -31,6 +31,7 @@
 		56F8819F52CF01D742D7951E /* WorkSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1293B98F4D8F71672AE09B /* WorkSchedule.swift */; };
 		2088BB8DC4FF034B573F8358 /* AccountDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A914F9C593ED00757C77BF /* AccountDetailView.swift */; };
 		2201A36579D894B13F351A57 /* AccountRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406A6D636DC9D73608817898 /* AccountRow.swift */; };
+		34E4CEBD11B83A9AFAEFA458 /* CostPaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDE95EEE28A5B829BF659413 /* CostPaceViews.swift */; };
 		A8D3924F579FF96E8F6D9B75 /* FleetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDA7175C919E38B1E7F1F978 /* FleetViews.swift */; };
 		23FD4B1D40FF288195120CDD /* HostedMenuItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665421CCE0CC8A94CEA71BCD /* HostedMenuItem.swift */; };
 		F219AC9055BF2435441405B9 /* PanelModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA13C90B5FD49F561FBD288 /* PanelModel.swift */; };
@@ -62,6 +63,7 @@
 		DA1293B98F4D8F71672AE09B /* WorkSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkSchedule.swift; sourceTree = "<group>"; };
 		75A914F9C593ED00757C77BF /* AccountDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDetailView.swift; sourceTree = "<group>"; };
 		406A6D636DC9D73608817898 /* AccountRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountRow.swift; sourceTree = "<group>"; };
+		CDE95EEE28A5B829BF659413 /* CostPaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CostPaceViews.swift; sourceTree = "<group>"; };
 		DDA7175C919E38B1E7F1F978 /* FleetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViews.swift; sourceTree = "<group>"; };
 		665421CCE0CC8A94CEA71BCD /* HostedMenuItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedMenuItem.swift; sourceTree = "<group>"; };
 		3FA13C90B5FD49F561FBD288 /* PanelModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelModel.swift; sourceTree = "<group>"; };
@@ -178,6 +180,7 @@
 			children = (
 				75A914F9C593ED00757C77BF /* AccountDetailView.swift */,
 				406A6D636DC9D73608817898 /* AccountRow.swift */,
+				CDE95EEE28A5B829BF659413 /* CostPaceViews.swift */,
 				DDA7175C919E38B1E7F1F978 /* FleetViews.swift */,
 				665421CCE0CC8A94CEA71BCD /* HostedMenuItem.swift */,
 				3FA13C90B5FD49F561FBD288 /* PanelModel.swift */,
@@ -272,6 +275,7 @@
 				56F8819F52CF01D742D7951E /* WorkSchedule.swift in Sources */,
 				2088BB8DC4FF034B573F8358 /* AccountDetailView.swift in Sources */,
 				2201A36579D894B13F351A57 /* AccountRow.swift in Sources */,
+				34E4CEBD11B83A9AFAEFA458 /* CostPaceViews.swift in Sources */,
 				A8D3924F579FF96E8F6D9B75 /* FleetViews.swift in Sources */,
 				23FD4B1D40FF288195120CDD /* HostedMenuItem.swift in Sources */,
 				F219AC9055BF2435441405B9 /* PanelModel.swift in Sources */,

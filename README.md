@@ -9,10 +9,9 @@ A macOS menu-bar app for tracking Claude Code usage across multiple Anthropic ac
 - A "Next" badge recommends the account with room under both of its limits whose weekly window resets soonest
 - Optional auto-switching moves the login to that account before the active one reaches either limit, polling faster the harder a session is being used, and stays put rather than landing on an account that's nearly full (off by default; configure it from the gear icon)
 - Every usage reading is kept for five weeks to learn your pace: how fast each account fills per hour of work, and when in the week you tend to work (seeded from the work hours you set)
-- Forecasts: a one-line verdict on whether your accounts carry the week at your current pace, and when each account would reach its limits
-- Hover an account for its details: usage against its limits, current and typical pace, a chart of the week so far and where it's headed, and its limits
+- Hover an account for its details: usage against its limits, current and typical pace, when it would reach its limits, a chart of the week so far and where it's headed, and its limits
 - Usage comes straight from Anthropic's OAuth endpoints — no CLI processes are spawned
-- Past sessions are indexed locally and scanned for estimated costs
+- Cost & Pace: estimated costs for today and the last 30 days from your local Claude Code logs, and a one-line verdict on whether your accounts carry the week at your current pace. Hover it for tokens by hour over the last week, so big sessions stand out as spikes, then the work each account has left and when you tend to work
 - A global keyboard shortcut shows or hides the panel from any app; set it in Settings
 
 ## Installation

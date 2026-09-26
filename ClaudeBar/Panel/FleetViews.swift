@@ -50,14 +50,12 @@ struct FleetStatus {
     }
 }
 
-/// The one-line forecast under the header. Hovering it opens `FleetDetailView`.
-struct FleetStatusRow: View {
-    let model: PanelModel
-
-    @State private var isHovering = false
+/// The fleet forecast in one line: a dot colored by how it reads, the verdict, and a detail.
+struct FleetStatusLine: View {
+    let fleet: FleetForecast?
 
     var body: some View {
-        let status = FleetStatus(fleet: self.model.snapshot?.fleet, now: Date())
+        let status = FleetStatus(fleet: self.fleet, now: Date())
         HStack(spacing: 7) {
             Circle()
                 .fill(status.color)
@@ -70,34 +68,29 @@ struct FleetStatusRow: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            DisclosureChevron()
         }
-        .padding(.horizontal, PanelLayout.horizontalPadding)
-        .padding(.vertical, 6)
-        .rowHighlight(self.isHovering)
-        .contentShape(Rectangle())
-        .onHover { self.isHovering = $0 }
     }
 }
 
 /// Whether the accounts together carry the work ahead, what each has left, and
 /// the weekly rhythm the forecast assumes.
-struct FleetDetailView: View {
-    let model: PanelModel
+struct FleetPaceSection: View {
+    let snapshot: AccountsSnapshot?
+    let now: Date
 
     var body: some View {
-        let now = Date()
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pace & forecast")
-                .font(.system(size: 13, weight: .semibold))
-            Text(Self.summary(self.model.snapshot?.fleet, now: now))
-                .font(.system(size: 11))
-                .fixedSize(horizontal: false, vertical: true)
-            if let snapshot = self.model.snapshot, snapshot.fleet != nil {
-                self.capacitySection(snapshot, now: now)
+            VStack(alignment: .leading, spacing: 4) {
+                SectionTitle(text: "Pace")
+                Text(Self.summary(self.snapshot?.fleet, now: self.now))
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let snapshot = self.snapshot, snapshot.fleet != nil {
+                self.capacitySection(snapshot)
             }
             Divider()
-            if let activity = self.model.snapshot?.activity {
+            if let activity = self.snapshot?.activity {
                 self.activitySection(activity)
             }
             Text("Forecasts move work to the next account as each one fills, the way auto-switching does, and follow your current pace for the next couple of hours before easing into your usual rhythm.")
@@ -105,7 +98,6 @@ struct FleetDetailView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(PanelLayout.horizontalPadding)
     }
 
     private static func summary(_ fleet: FleetForecast?, now: Date) -> String {
@@ -126,12 +118,12 @@ struct FleetDetailView: View {
         return sentences.joined(separator: " ")
     }
 
-    private func capacitySection(_ snapshot: AccountsSnapshot, now: Date) -> some View {
+    private func capacitySection(_ snapshot: AccountsSnapshot) -> some View {
         let largest = snapshot.displays.compactMap { $0.insight?.bankedHours }.max() ?? 0
         return VStack(alignment: .leading, spacing: 6) {
             SectionTitle(text: "Work left under weekly limits")
             ForEach(snapshot.displays) { display in
-                CapacityRow(display: display, largestBankedHours: largest, now: now)
+                CapacityRow(display: display, largestBankedHours: largest, now: self.now)
             }
         }
     }

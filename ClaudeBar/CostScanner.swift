@@ -27,9 +27,10 @@ final class CostScanner: Sendable {
         self.progressContinuation.yield(ScanProgress(scannedFiles: scanned, totalFiles: total, isComplete: isComplete))
     }
 
-    /// Walks the Claude Code logs and totals cost for today and the last 30 days.
-    /// Rates come from `pricing`; models it doesn't cover land in the snapshot's
-    /// `unpricedModels` with their tokens counted but no cost attributed.
+    /// Walks the Claude Code logs and totals cost for today and the last 30 days,
+    /// with the last week hour by hour. Rates come from `pricing`; models it
+    /// doesn't cover land in the snapshot's `unpricedModels` with their tokens
+    /// counted but no cost attributed.
     func scan(pricing: PricingTable) -> CostSnapshot {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let roots = [
@@ -39,11 +40,9 @@ final class CostScanner: Sendable {
 
         let now = Date()
         let calendar = Calendar.current
-        let todayKey = Self.dayKey(from: now)
-        let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: now) ?? now
-        let sinceKey = Self.dayKey(from: thirtyDaysAgo)
+        let windowStart = CostSnapshot.windowStart(now: now, calendar: calendar)
 
-        var cache = CostCache.load(version: CostCache.version(pricing: pricing))
+        var cache = CostCache.load(version: CostCache.version(pricing: pricing, timeZone: calendar.timeZone))
         var allFiles: [(url: URL, size: Int64, mtimeMs: Int64)] = []
 
         for root in roots {
@@ -61,71 +60,56 @@ final class CostScanner: Sendable {
                 guard values.isRegularFile == true else { continue }
                 let size = Int64(values.fileSize ?? 0)
                 if size <= 0 { continue }
-                let mtime = values.contentModificationDate?.timeIntervalSince1970 ?? 0
-                allFiles.append((url: url, size: size, mtimeMs: Int64(mtime * 1000)))
+                // Logs only ever grow by appending, so a file last written before
+                // the window holds nothing in it. Most logs on disk are that old;
+                // reading them anyway turns a cold scan into minutes.
+                guard let modifiedAt = values.contentModificationDate, modifiedAt >= windowStart else { continue }
+                allFiles.append((url: url, size: size, mtimeMs: Int64(modifiedAt.timeIntervalSince1970 * 1000)))
             }
         }
 
         let totalFiles = allFiles.count
         self.reportProgress(scanned: 0, total: totalFiles, isComplete: false)
 
-        var todayCost: Double = 0
-        var todayTokens: Int = 0
-        var totalCost: Double = 0
-        var totalTokens: Int = 0
+        var hoursByStart: [Date: HourlyUsage] = [:]
         var seenMessageKeys: Set<String> = []
         var touchedPaths: Set<String> = []
-        var unpricedModels: Set<String> = []
 
         for (index, file) in allFiles.enumerated() {
             let path = file.url.path
             touchedPaths.insert(path)
 
+            let fileHours: [HourlyUsage]
+            let wasCached: Bool
             if let cached = cache.files[path],
                cached.mtimeMs == file.mtimeMs,
                cached.size == file.size
             {
-                for day in cached.days {
-                    guard day.key >= sinceKey else { continue }
-                    totalCost += day.value.cost
-                    totalTokens += day.value.tokens
-                    unpricedModels.formUnion(day.value.unpricedModels)
-                    if day.key == todayKey {
-                        todayCost += day.value.cost
-                        todayTokens += day.value.tokens
-                    }
-                }
-                if (index + 1) % 200 == 0 || index == totalFiles - 1 {
-                    self.reportProgress(scanned: index + 1, total: totalFiles, isComplete: false)
-                }
-                continue
+                fileHours = cached.hours
+                wasCached = true
+            } else {
+                fileHours = Self.parseFile(
+                    url: file.url,
+                    pricing: pricing,
+                    since: windowStart,
+                    calendar: calendar,
+                    seenKeys: &seenMessageKeys)
+                cache.files[path] = CachedFile(mtimeMs: file.mtimeMs, size: file.size, hours: fileHours)
+                wasCached = false
             }
 
-            let result = Self.parseFile(
-                url: file.url,
-                pricing: pricing,
-                sinceKey: sinceKey,
-                todayKey: todayKey,
-                seenKeys: &seenMessageKeys)
-
-            cache.files[path] = CachedFile(
-                mtimeMs: file.mtimeMs,
-                size: file.size,
-                days: result.days)
-
-            for day in result.days {
-                totalCost += day.value.cost
-                totalTokens += day.value.tokens
-                unpricedModels.formUnion(day.value.unpricedModels)
-                if day.key == todayKey {
-                    todayCost += day.value.cost
-                    todayTokens += day.value.tokens
-                }
+            for hour in fileHours {
+                hoursByStart[hour.start, default: HourlyUsage(start: hour.start, cost: 0, tokens: 0, unpricedModels: [])]
+                    .add(hour)
             }
 
-            if (index + 1) % 50 == 0 || index == totalFiles - 1 {
+            // Cached files go by quickly, so they report less often and leave
+            // the cache as it was.
+            if (index + 1) % (wasCached ? 200 : 50) == 0 || index == totalFiles - 1 {
                 self.reportProgress(scanned: index + 1, total: totalFiles, isComplete: false)
-                cache.save()
+                if !wasCached {
+                    cache.save()
+                }
             }
         }
 
@@ -136,32 +120,24 @@ final class CostScanner: Sendable {
         cache.save()
         self.reportProgress(scanned: totalFiles, total: totalFiles, isComplete: true)
 
-        return CostSnapshot(
-            todayCostUSD: todayCost,
-            todayTokens: todayTokens,
-            last30DaysCostUSD: totalCost,
-            last30DaysTokens: totalTokens,
-            unpricedModels: unpricedModels.sorted())
+        return CostSnapshot(summarizing: hoursByStart.values, now: now, calendar: calendar)
     }
 
     // MARK: - File parsing
 
-    private struct FileParseResult {
-        var days: [String: DayUsage]
-    }
-
+    /// The file's usage per local clock hour, from `since` on.
     private static func parseFile(
         url: URL,
         pricing: PricingTable,
-        sinceKey: String,
-        todayKey: String,
-        seenKeys: inout Set<String>) -> FileParseResult
+        since: Date,
+        calendar: Calendar,
+        seenKeys: inout Set<String>) -> [HourlyUsage]
     {
-        var days: [String: DayUsage] = [:]
+        var hours: [Date: HourlyUsage] = [:]
 
         guard let data = try? Data(contentsOf: url),
               let content = String(data: data, encoding: .utf8)
-        else { return FileParseResult(days: days) }
+        else { return [] }
 
         for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
             guard line.contains("\"type\":\"assistant\"") || line.contains("\"type\": \"assistant\"") else { continue }
@@ -173,9 +149,11 @@ final class CostScanner: Sendable {
                   type == "assistant"
             else { continue }
 
-            guard let timestamp = obj["timestamp"] as? String else { continue }
-            guard let dayKey = Self.dayKeyFromTimestamp(timestamp) else { continue }
-            guard dayKey >= sinceKey else { continue }
+            guard let timestamp = obj["timestamp"] as? String,
+                  let loggedAt = Self.date(fromTimestamp: timestamp),
+                  loggedAt >= since,
+                  let hourStart = calendar.dateInterval(of: .hour, for: loggedAt)?.start
+            else { continue }
 
             guard let message = obj["message"] as? [String: Any],
                   let model = message["model"] as? String,
@@ -208,11 +186,11 @@ final class CostScanner: Sendable {
             // Fast mode is recorded on usage.speed, not in the model string.
             let isFast = (usage["speed"] as? String) == "fast"
 
-            var day = days[dayKey] ?? DayUsage(cost: 0, tokens: 0, unpricedModels: [])
-            day.tokens += lineTokens
+            var hour = hours[hourStart] ?? HourlyUsage(start: hourStart, cost: 0, tokens: 0, unpricedModels: [])
+            hour.tokens += lineTokens
 
             if let modelPricing = pricing.pricing(for: model, isFast: isFast) {
-                day.cost += Self.computeCost(
+                hour.cost += Self.computeCost(
                     pricing: modelPricing,
                     inputTokens: inputTokens,
                     outputTokens: outputTokens,
@@ -223,15 +201,15 @@ final class CostScanner: Sendable {
                 // Count the tokens but attribute no cost, and name the model so the
                 // UI can say the total is short rather than passing it off as whole.
                 let name = PricingTable.normalizeModelName(model)
-                if !day.unpricedModels.contains(name) {
-                    day.unpricedModels.append(name)
+                if !hour.unpricedModels.contains(name) {
+                    hour.unpricedModels.append(name)
                 }
             }
 
-            days[dayKey] = day
+            hours[hourStart] = hour
         }
 
-        return FileParseResult(days: days)
+        return hours.values.sorted { $0.start < $1.start }
     }
 
     // MARK: - Pricing
@@ -254,20 +232,14 @@ final class CostScanner: Sendable {
 
     // MARK: - Helpers
 
-    private static func dayKeyFromTimestamp(_ timestamp: String) -> String? {
-        guard timestamp.count >= 10 else { return nil }
-        let prefix = String(timestamp.prefix(10))
-        if prefix.contains("-") && prefix.count == 10 {
-            return prefix
-        }
-        return nil
-    }
+    private static let timestampWithFraction = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
-    private static func dayKey(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = .current
-        return formatter.string(from: date)
+    /// Log timestamps are ISO 8601 in UTC, normally with milliseconds.
+    private static func date(fromTimestamp timestamp: String) -> Date? {
+        if let date = try? Date(timestamp, strategy: Self.timestampWithFraction) {
+            return date
+        }
+        return try? Date(timestamp, strategy: .iso8601)
     }
 
     private static func intValue(_ value: Any?) -> Int {
@@ -278,31 +250,23 @@ final class CostScanner: Sendable {
 
 // MARK: - Cache types
 
-struct DayUsage: Codable, Sendable {
-    var cost: Double
-    var tokens: Int
-    /// Models seen this day that the pricing table had no rates for. Their tokens
-    /// are in `tokens`; their cost is not in `cost`. Recorded per day so the cached
-    /// result reports them only while the day stays inside the 30-day window.
-    var unpricedModels: [String]
-}
-
 struct CachedFile: Codable {
     let mtimeMs: Int64
     let size: Int64
-    let days: [String: DayUsage]
+    let hours: [HourlyUsage]
 }
 
 struct CostCache: Codable {
     /// Bump when the shape of what's cached changes, so an old file is discarded
     /// rather than decoded into the new types.
-    private static let schemaVersion = 3
+    private static let schemaVersion = 4
 
-    /// Identifies the rates the cached costs were computed at. Rates arriving over
-    /// the network means this can't be a constant we remember to bump: it is
-    /// derived from the pricing itself, so any change invalidates the cache.
-    static func version(pricing: PricingTable) -> String {
-        "\(Self.schemaVersion):\(pricing.version)"
+    /// Identifies the rates the cached costs were computed at and the time zone
+    /// their hours were cut in. Rates arriving over the network means this can't
+    /// be a constant we remember to bump: it is derived from the pricing itself,
+    /// so any change invalidates the cache.
+    static func version(pricing: PricingTable, timeZone: TimeZone) -> String {
+        "\(Self.schemaVersion):\(timeZone.identifier):\(pricing.version)"
     }
 
     var version: String

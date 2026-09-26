@@ -16,6 +16,9 @@ struct UsageMetric: Sendable, Codable {
 }
 
 struct CostSnapshot: Sendable, Codable {
+    /// How far back `hours` reaches: a week, long enough to compare sessions.
+    static let hourlyWindow: TimeInterval = 7 * 24 * 60 * 60
+
     let todayCostUSD: Double
     let todayTokens: Int
     let last30DaysCostUSD: Double
@@ -23,6 +26,83 @@ struct CostSnapshot: Sendable, Codable {
     /// Models in the window ClaudeBar had no rates for. Their tokens are in the
     /// totals above but their cost is not, so the figures understate by their share.
     let unpricedModels: [String]
+    /// Every local clock hour with logged usage over the last `hourlyWindow`, oldest first.
+    let hours: [HourlyUsage]
+
+    /// Where the 30-day totals start counting: the start of the local day 30 days before today.
+    static func windowStart(now: Date, calendar: Calendar) -> Date {
+        let startOfToday = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: -30, to: startOfToday) ?? startOfToday
+    }
+}
+
+extension CostSnapshot {
+    /// Totals as of `now` over hours scanned from the logs, in `calendar`'s time zone.
+    init(summarizing scanned: some Sequence<HourlyUsage>, now: Date, calendar: Calendar) {
+        let startOfToday = calendar.startOfDay(for: now)
+        let windowStart = Self.windowStart(now: now, calendar: calendar)
+        let hourlyStart = now.addingTimeInterval(-Self.hourlyWindow)
+        var todayCost: Double = 0
+        var todayTokens = 0
+        var totalCost: Double = 0
+        var totalTokens = 0
+        var unpricedModels: Set<String> = []
+        var recentHours: [HourlyUsage] = []
+        for hour in scanned where hour.start >= windowStart {
+            totalCost += hour.cost
+            totalTokens += hour.tokens
+            unpricedModels.formUnion(hour.unpricedModels)
+            if hour.start >= startOfToday {
+                todayCost += hour.cost
+                todayTokens += hour.tokens
+            }
+            if hour.end > hourlyStart {
+                recentHours.append(hour)
+            }
+        }
+        self.init(
+            todayCostUSD: todayCost,
+            todayTokens: todayTokens,
+            last30DaysCostUSD: totalCost,
+            last30DaysTokens: totalTokens,
+            unpricedModels: unpricedModels.sorted(),
+            hours: recentHours.sorted { $0.start < $1.start })
+    }
+
+    /// Snapshots cached before hourly figures existed decode without them.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.todayCostUSD = try container.decode(Double.self, forKey: .todayCostUSD)
+        self.todayTokens = try container.decode(Int.self, forKey: .todayTokens)
+        self.last30DaysCostUSD = try container.decode(Double.self, forKey: .last30DaysCostUSD)
+        self.last30DaysTokens = try container.decode(Int.self, forKey: .last30DaysTokens)
+        self.unpricedModels = try container.decode([String].self, forKey: .unpricedModels)
+        self.hours = try container.decodeIfPresent([HourlyUsage].self, forKey: .hours) ?? []
+    }
+}
+
+/// Tokens and estimated cost logged in one local clock hour.
+struct HourlyUsage: Sendable, Codable, Equatable {
+    static let length: TimeInterval = 60 * 60
+
+    /// Where the hour starts in the time zone the logs were scanned in.
+    let start: Date
+    var cost: Double
+    var tokens: Int
+    /// Models seen this hour that the pricing table had no rates for. Their tokens
+    /// are in `tokens`; their cost is not in `cost`.
+    var unpricedModels: [String]
+
+    var end: Date { self.start.addingTimeInterval(Self.length) }
+
+    /// Adds another tally of the same hour.
+    mutating func add(_ other: HourlyUsage) {
+        self.cost += other.cost
+        self.tokens += other.tokens
+        for model in other.unpricedModels where !self.unpricedModels.contains(model) {
+            self.unpricedModels.append(model)
+        }
+    }
 }
 
 /// One managed Anthropic account. `id` is the account UUID from the OAuth profile.

@@ -57,6 +57,28 @@ enum Formatting {
         return dateFormatter.string(from: date)
     }
 
+    /// A clock hour gone by, as a chart reads it back: "Today 3pm", "Yesterday 11am", "Thu 9am".
+    static func pastHour(_ date: Date, now: Date = Date()) -> String {
+        let calendar = Calendar.current
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "ha"
+        timeFormatter.amSymbol = "am"
+        timeFormatter.pmSymbol = "pm"
+        let time = timeFormatter.string(from: date)
+
+        if calendar.isDate(date, inSameDayAs: now) {
+            return "Today \(time)"
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday)
+        {
+            return "Yesterday \(time)"
+        }
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "EEE"
+        return "\(dayFormatter.string(from: date)) \(time)"
+    }
+
     /// A forecast moment rounded to the quarter hour; forecasts are not minute-precise.
     static func approximateMoment(_ date: Date, now: Date = Date()) -> String {
         let quarterHour: TimeInterval = 15 * 60
