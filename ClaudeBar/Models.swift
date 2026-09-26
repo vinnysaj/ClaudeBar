@@ -36,6 +36,51 @@ struct Account: Sendable, Codable, Identifiable {
     var oauthAccountRaw: Data?
     var displayOrder: Int
     var needsRelogin: Bool
+    var preferences: AccountPreferences
+}
+
+extension Account {
+    /// Rosters saved before per-account preferences existed decode with the defaults.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.email = try container.decode(String.self, forKey: .email)
+        self.organizationName = try container.decodeIfPresent(String.self, forKey: .organizationName)
+        self.oauthAccountRaw = try container.decodeIfPresent(Data.self, forKey: .oauthAccountRaw)
+        self.displayOrder = try container.decode(Int.self, forKey: .displayOrder)
+        self.needsRelogin = try container.decode(Bool.self, forKey: .needsRelogin)
+        self.preferences = try container.decodeIfPresent(AccountPreferences.self, forKey: .preferences)
+            ?? .default
+    }
+}
+
+/// Per-account choices that override the global usage settings.
+struct AccountPreferences: Sendable, Codable, Equatable {
+    /// Session percent this account stops taking work at; nil follows the global default.
+    var sessionLimit: Int?
+    /// Weekly percent this account stops taking work at; nil follows the global
+    /// default. Setting it below 100 keeps the rest in reserve, e.g. for claude.ai.
+    var weeklyLimit: Int?
+    /// Whether auto-switching may move the login onto this account.
+    var allowsAutoSwitch: Bool
+
+    static let `default` = AccountPreferences(sessionLimit: nil, weeklyLimit: nil, allowsAutoSwitch: true)
+    static let limitRange = 10...100
+    static let limitStep = 5
+}
+
+/// The usage, in percent, an account takes work up to. Auto-switching moves the
+/// login off an account at either limit and never onto one near them.
+struct AccountLimits: Sendable, Equatable {
+    let session: Int
+    let weekly: Int
+
+    func percent(_ window: UsageWindow) -> Int {
+        switch window {
+        case .session: return self.session
+        case .weekly: return self.weekly
+        }
+    }
 }
 
 /// Persisted roster (Application Support/ClaudeBar/accounts.json).
@@ -78,8 +123,28 @@ struct AccountDisplay: Sendable, Identifiable {
     let isActive: Bool
     var isRecommended: Bool
     let isStale: Bool
+    /// The limits this account is held to, with the global defaults filled in.
+    let limits: AccountLimits
+    /// Pace and forecast. Only the UI snapshot computes these; the planner has no use for them.
+    var insight: AccountInsight?
 
     var id: String { self.account.id }
+}
+
+/// What the usage history says about one account.
+struct AccountInsight: Sendable {
+    /// How fast usage moved over the last half hour.
+    let currentPace: CurrentPace?
+    /// How fast this account's limits fill per hour of active work.
+    let typicalPace: TypicalPace?
+    /// The typical pace is pooled across every account, for want of enough of this one's own.
+    let isPacePooled: Bool
+    /// Where usage is headed if all work went to this account; nil without a pace.
+    let forecast: AccountForecast?
+    /// Hours of work the remaining weekly room covers at the typical pace.
+    let bankedHours: Double?
+    /// Weekly usage recorded since the current weekly window opened.
+    let weeklyHistory: [UsagePoint]
 }
 
 /// A global hotkey, stored in Carbon's units because `RegisterEventHotKey` takes
@@ -107,7 +172,30 @@ struct KeyCombo: Sendable, Codable, Equatable {
 enum SwitchTrigger: Sendable {
     case user
     /// Auto-switching, with the condition on the previous account that caused it.
-    case automatic(reason: String)
+    case automatic(reason: SwitchReason)
+}
+
+/// The condition on the active account that made auto-switching move the login.
+enum SwitchReason: Sendable, Equatable, CustomStringConvertible {
+    case sessionAtLimit(percent: Int, limit: Int)
+    case weeklyAtLimit(percent: Int, limit: Int)
+    /// Usage would cross the limit before the next check.
+    case sessionClimbing(percent: Int, limit: Int)
+    case weeklyClimbing(percent: Int, limit: Int)
+
+    /// Completes a sentence that starts with the account's email.
+    var description: String {
+        switch self {
+        case .sessionAtLimit(let percent, let limit):
+            return "reached its \(limit)% session limit (at \(percent)%)"
+        case .weeklyAtLimit(let percent, let limit):
+            return "reached its \(limit)% weekly limit (at \(percent)%)"
+        case .sessionClimbing(let percent, let limit):
+            return "was about to reach its \(limit)% session limit (at \(percent)% and climbing)"
+        case .weeklyClimbing(let percent, let limit):
+            return "was about to reach its \(limit)% weekly limit (at \(percent)% and climbing)"
+        }
+    }
 }
 
 enum BannerKind: Sendable {
@@ -128,4 +216,10 @@ struct AccountsSnapshot: Sendable {
     let isPendingAdd: Bool
     let cost: CostSnapshot?
     let updatedAt: Date?
+    /// Whether the accounts together carry the expected work; nil until the
+    /// history holds enough work to measure a pace.
+    let fleet: FleetForecast?
+    /// When the user tends to work: the configured schedule, reshaped by
+    /// whatever history there is so far.
+    let activity: ActivityProfile
 }

@@ -31,8 +31,15 @@ actor AccountManager {
     /// Usage is refetched per account at most every `settings.refreshInterval`
     /// — including across restarts, since fetch times persist with the cache.
     private var settings: UsageSettings
-    private var rateTracker = UsageRateTracker()
     private var lastManualSwitchAt: Date?
+    /// Every reading fetched, for pace and forecasts. Rewritten whole on save, so
+    /// saves are spaced out; quitting between two loses at most that much.
+    private var history: UsageHistory
+    private var historySavedAt: Date?
+    private static let historySaveInterval: TimeInterval = 10 * 60
+    /// Learned from `history`; cleared whenever the history or the work schedule
+    /// changes and relearned on next use.
+    private var paceModel: PaceModel?
     /// Rendered as stale (dimmed) when older than this; enough beyond the refresh
     /// interval that rows don't flicker stale right before a refetch.
     private var usageStaleDisplayInterval: TimeInterval { self.settings.refreshInterval + 5 * 60 }
@@ -45,13 +52,14 @@ actor AccountManager {
         self.state = Self.loadState()
         self.cache = Self.loadCache()
         self.settings = UsageSettings.saved
+        self.history = UsageHistory.load()
     }
 
     // MARK: - Snapshot for UI
 
     func snapshot() -> AccountsSnapshot {
         let now = Date()
-        let displays = self.displays(now: now)
+        var displays = self.displays(now: now)
 
         if let expiresAt = self.infoBannerExpiresAt, expiresAt < now {
             self.infoBanner = nil
@@ -62,12 +70,24 @@ actor AccountManager {
         let updatedAt = activeUsage?.fetchedAt
             ?? self.cache.usageByAccount.values.map(\.fetchedAt).max()
 
+        let pace = self.learnedPace()
+        let demand = DemandCurve(
+            activity: pace.activity,
+            calendar: .current,
+            now: now,
+            currentIntensity: self.currentIntensity(pace: pace, now: now))
+        for index in displays.indices {
+            displays[index].insight = self.insight(for: displays[index], pace: pace, demand: demand, now: now)
+        }
+
         return AccountsSnapshot(
             displays: displays,
             banner: self.errorBanner ?? self.infoBanner,
             isPendingAdd: self.isPendingAdd,
             cost: self.cache.cost,
-            updatedAt: updatedAt)
+            updatedAt: updatedAt,
+            fleet: self.fleetForecast(displays, pace: pace, demand: demand, now: now),
+            activity: pace.activity)
     }
 
     var isPendingAdd: Bool {
@@ -89,14 +109,89 @@ actor AccountManager {
                 usage: usage,
                 isActive: account.id == self.state.activeAccountUuid,
                 isRecommended: false,
-                isStale: isStale)
+                isStale: isStale,
+                limits: self.settings.limits(for: account.preferences),
+                insight: nil)
         }
-        let recommendedId = AutoSwitchPlanner.rankedCandidates(
-            displays, threshold: self.settings.switchAtSessionPercent, now: now).first?.id
+        let recommendedId = AutoSwitchPlanner.rankedCandidates(displays, now: now).first?.id
         if let index = displays.firstIndex(where: { $0.id == recommendedId }) {
             displays[index].isRecommended = true
         }
         return displays
+    }
+
+    // MARK: - Pace and forecasts
+
+    private func learnedPace() -> PaceModel {
+        if let paceModel = self.paceModel { return paceModel }
+        let learned = PaceModel.learn(from: self.history, schedule: self.settings.workSchedule, calendar: .current)
+        self.paceModel = learned
+        return learned
+    }
+
+    /// How hard the user is working on the active account right now relative to
+    /// its typical pace; nil without recent readings to judge by.
+    private func currentIntensity(pace: PaceModel, now: Date) -> Double? {
+        guard let activeId = self.state.activeAccountUuid,
+              let current = self.history.currentPace(for: activeId, at: now)?.sessionPerHour
+        else { return nil }
+        guard let typical = pace.typicalPace(for: activeId)?.pace.sessionPerActiveHour, typical > 0 else {
+            // Without a typical pace to compare against, all that's known is
+            // whether work is happening.
+            return current > 0 ? 1 : 0
+        }
+        return max(0, current) / typical
+    }
+
+    private func insight(
+        for display: AccountDisplay, pace: PaceModel, demand: DemandCurve, now: Date) -> AccountInsight
+    {
+        let typical = pace.typicalPace(for: display.id)
+        let simulated = typical.flatMap { self.forecastAccount(display, pace: $0.pace, now: now) }
+        let weeklyHistory = display.usage?.weekly?.resetsAt.map {
+            self.history.weeklyPoints(for: display.id, windowResettingAt: $0)
+        }
+        return AccountInsight(
+            currentPace: self.history.currentPace(for: display.id, at: now),
+            typicalPace: typical?.pace,
+            isPacePooled: typical?.isPooled ?? false,
+            forecast: simulated.map { UsageForecaster.account($0, demand: demand) },
+            bankedHours: simulated?.bankedHours,
+            weeklyHistory: weeklyHistory ?? [])
+    }
+
+    private func fleetForecast(
+        _ displays: [AccountDisplay], pace: PaceModel, demand: DemandCurve, now: Date) -> FleetForecast?
+    {
+        // Every account has a pace, its own or the pooled one, once anything has
+        // been measured; before that there is nothing to forecast from.
+        guard pace.pooledPace != nil else { return nil }
+        let accounts = displays.compactMap { display in
+            pace.typicalPace(for: display.id).flatMap { self.forecastAccount(display, pace: $0.pace, now: now) }
+        }
+        guard !accounts.isEmpty else { return nil }
+        let activeId = displays.first { $0.isActive && !$0.account.needsRelogin }?.id
+        return UsageForecaster.fleet(accounts: accounts, activeId: activeId, demand: demand)
+    }
+
+    /// The account as the forecaster starts from: current figures, with windows
+    /// whose reset has passed treated as empty. Nil for accounts that can't work.
+    private func forecastAccount(
+        _ display: AccountDisplay, pace: TypicalPace, now: Date) -> UsageForecaster.Account?
+    {
+        guard let usage = display.usage, !display.account.needsRelogin else { return nil }
+        let sessionResetsAt = usage.session?.resetsAt.flatMap { $0 > now ? $0 : nil }
+        return UsageForecaster.Account(
+            id: display.id,
+            sessionPercent: Double(usage.session?.effectiveUsedPercent(at: now) ?? 0),
+            sessionResetsAt: sessionResetsAt,
+            weeklyPercent: Double(usage.weekly?.effectiveUsedPercent(at: now) ?? 0),
+            weeklyResetsAt: AutoSwitchPlanner.nextReset(
+                usage.weekly?.resetsAt, window: AutoSwitchPlanner.weeklyWindow, now: now),
+            limits: display.limits,
+            pace: pace,
+            isAvailable: display.account.preferences.allowsAutoSwitch,
+            displayOrder: display.account.displayOrder)
     }
 
     // MARK: - Reconcile
@@ -253,7 +348,8 @@ actor AccountManager {
             organizationName: profile.organization?.name,
             oauthAccountRaw: Self.readOauthAccountRaw(matching: uuid),
             displayOrder: (self.state.accounts.map(\.displayOrder).max() ?? -1) + 1,
-            needsRelogin: false)
+            needsRelogin: false,
+            preferences: .default)
 
         self.storeRosterBlob(blob, for: uuid)
         self.state.accounts.append(account)
@@ -264,7 +360,7 @@ actor AccountManager {
         self.logger.info("Captured account \(email, privacy: .private)")
 
         await self.fetchUsage(for: account, isActive: true)
-        self.saveCache()
+        self.saveUsage()
     }
 
     private func fetchProfileRefreshingIfNeeded(
@@ -400,15 +496,28 @@ actor AccountManager {
         self.state.accounts.remove(at: index)
         self.cache.usageByAccount.removeValue(forKey: accountUuid)
         self.clobberRepairsByUuid.removeValue(forKey: accountUuid)
-        self.rateTracker.forget(accountId: accountUuid)
+        self.history.forget(accountId: accountUuid)
+        self.paceModel = nil
         self.saveState()
         self.saveCache()
+        self.saveHistory(at: Date())
         return true
+    }
+
+    func setPreferences(_ preferences: AccountPreferences, for accountUuid: String) {
+        guard let index = self.state.accounts.firstIndex(where: { $0.id == accountUuid }),
+              self.state.accounts[index].preferences != preferences
+        else { return }
+        self.state.accounts[index].preferences = preferences
+        self.saveState()
     }
 
     // MARK: - Auto-switch
 
     func apply(settings: UsageSettings) {
+        if settings.workSchedule != self.settings.workSchedule {
+            self.paceModel = nil
+        }
         self.settings = settings
     }
 
@@ -416,36 +525,52 @@ actor AccountManager {
     /// limits. Runs after every usage refresh; the planner decides.
     func autoSwitchIfNeeded() async {
         guard self.settings.autoSwitchEnabled, !self.isPendingAdd else { return }
-        let now = Date()
-        let displays = self.displays(now: now)
-        let rate = self.state.activeAccountUuid.flatMap {
-            self.rateTracker.percentPerHour(for: $0, at: now)
+        var decision = self.switchDecision(now: Date())
+
+        // The chosen account's cached figures can be minutes old, and claude.ai or
+        // another machine may have used it since. Confirm them before moving the
+        // login; if fresh figures rule it out, the next best gets the same check.
+        var confirmed = Set<String>()
+        while case .switchTo(let accountId, _) = decision,
+              !confirmed.contains(accountId),
+              let account = self.state.accounts.first(where: { $0.id == accountId }),
+              let cached = self.cache.usageByAccount[accountId],
+              Date().timeIntervalSince(cached.fetchedAt) > AutoSwitchPlanner.candidateFreshness
+        {
+            confirmed.insert(accountId)
+            await self.fetchUsage(for: account, isActive: false)
+            self.saveUsage()
+            decision = self.switchDecision(now: Date())
         }
-        let decision = AutoSwitchPlanner.decide(
-            displays: displays,
-            settings: self.settings,
-            activeRatePercentPerHour: rate,
-            lastManualSwitchAt: self.lastManualSwitchAt,
-            now: now)
 
         switch decision {
         case .stay:
             return
         case .noCandidate(let reason):
-            let activeEmail = displays.first(where: \.isActive)?.account.email ?? "The active account"
+            let activeEmail = self.state.accounts.first { $0.id == self.state.activeAccountUuid }?.email
+                ?? "The active account"
             self.infoBanner = Banner(
                 kind: .warning,
-                message: "\(activeEmail) \(reason), but every other account is near its limit too.")
-            self.infoBannerExpiresAt = now.addingTimeInterval(5 * 60)
+                message: "\(activeEmail) \(reason), but no other account has room under its limits. Staying put.")
+            self.infoBannerExpiresAt = Date().addingTimeInterval(5 * 60)
         case .switchTo(let accountId, let reason):
-            self.logger.info("Auto-switching: \(reason, privacy: .public)")
+            self.logger.info("Auto-switching: \(reason.description, privacy: .public)")
             guard await self.switchTo(accountUuid: accountId, trigger: .automatic(reason: reason)),
                   let account = self.state.accounts.first(where: { $0.id == accountId })
             else { return }
             // The new account's figures drive the next decision; don't wait a cycle.
             await self.fetchUsage(for: account, isActive: true)
-            self.saveCache()
+            self.saveUsage()
         }
+    }
+
+    private func switchDecision(now: Date) -> AutoSwitchPlanner.Decision {
+        AutoSwitchPlanner.decide(
+            displays: self.displays(now: now),
+            settings: self.settings,
+            activePace: self.state.activeAccountUuid.flatMap { self.history.currentPace(for: $0, at: now) },
+            lastManualSwitchAt: self.lastManualSwitchAt,
+            now: now)
     }
 
     // MARK: - Usage fetching
@@ -470,7 +595,7 @@ actor AccountManager {
             let isActive = account.id == self.state.activeAccountUuid
             if !force,
                let cached = self.cache.usageByAccount[account.id],
-               !self.isRefreshDue(for: account.id, cached: cached, isActive: isActive, position: position, now: now)
+               !self.isRefreshDue(for: account, cached: cached, isActive: isActive, position: position, now: now)
             {
                 continue
             }
@@ -482,7 +607,7 @@ actor AccountManager {
             fetchedAny = true
         }
         if fetchedAny {
-            self.saveCache()
+            self.saveUsage()
             self.saveState()
         }
     }
@@ -492,14 +617,22 @@ actor AccountManager {
     /// refreshes drift apart instead of landing in the same cycle. Any account is
     /// due at once when one of its windows has reset since the last fetch.
     private func isRefreshDue(
-        for accountId: String, cached: AccountUsage, isActive: Bool, position: Int, now: Date) -> Bool
+        for account: Account, cached: AccountUsage, isActive: Bool, position: Int, now: Date) -> Bool
     {
         if cached.hasWindowResetSinceFetch(now: now) { return true }
         let interval: TimeInterval
         if isActive {
+            let display = AccountDisplay(
+                account: account,
+                usage: cached,
+                isActive: true,
+                isRecommended: false,
+                isStale: false,
+                limits: self.settings.limits(for: account.preferences),
+                insight: nil)
             interval = AutoSwitchPlanner.activeRefreshInterval(
-                sessionPercent: cached.session?.effectiveUsedPercent(at: now) ?? 0,
-                ratePercentPerHour: self.rateTracker.percentPerHour(for: accountId, at: now),
+                active: AutoSwitchPlanner.Candidate(display: display, now: now),
+                pace: self.history.currentPace(for: account.id, at: now),
                 settings: self.settings)
         } else {
             interval = self.settings.refreshInterval + TimeInterval(position * 60)
@@ -510,9 +643,8 @@ actor AccountManager {
     private func storeUsage(_ raw: OAuthUsage, for account: Account) {
         let usage = Self.mapUsage(raw, fetchedAt: Date())
         self.cache.usageByAccount[account.id] = usage
-        if let session = usage.session {
-            self.rateTracker.record(percent: session.usedPercent, for: account.id, at: usage.fetchedAt)
-        }
+        self.history.record(UsageReading(usage: usage), for: account.id, at: usage.fetchedAt)
+        self.paceModel = nil
         self.setNeedsRelogin(false, for: account.id)
     }
 
@@ -876,6 +1008,21 @@ actor AccountManager {
 
     private func saveCache() {
         Self.save(self.cache, to: Self.cacheURL)
+    }
+
+    /// After a fetch: the cache always, the history when it is due.
+    private func saveUsage() {
+        self.saveCache()
+        let now = Date()
+        if let savedAt = self.historySavedAt, now.timeIntervalSince(savedAt) < Self.historySaveInterval {
+            return
+        }
+        self.saveHistory(at: now)
+    }
+
+    private func saveHistory(at now: Date) {
+        self.history.save()
+        self.historySavedAt = now
     }
 
     private static func save<Value: Encodable>(_ value: Value, to url: URL) {

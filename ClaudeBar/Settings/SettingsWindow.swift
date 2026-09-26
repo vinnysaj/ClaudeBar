@@ -73,6 +73,8 @@ struct SettingsView: View {
             Divider()
             self.switchingSection
             Divider()
+            self.workHoursSection
+            Divider()
             self.refreshSection
         }
         .padding(20)
@@ -114,19 +116,74 @@ struct SettingsView: View {
             Toggle("Switch accounts automatically", isOn: self.$usage.autoSwitchEnabled)
                 .toggleStyle(.checkbox)
                 .font(.system(size: 12))
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                GridRow {
+                    Text("Default session limit:")
+                        .font(.system(size: 12))
+                    Picker("Default session limit", selection: self.$usage.switchAtSessionPercent) {
+                        ForEach(Self.choices(UsageSettings.switchPercentChoices, including: self.usage.switchAtSessionPercent), id: \.self) { percent in
+                            Text("\(percent)%").tag(percent)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 72)
+                }
+                GridRow {
+                    Text("Default weekly limit:")
+                        .font(.system(size: 12))
+                    Picker("Default weekly limit", selection: self.$usage.switchAtWeeklyPercent) {
+                        ForEach(Self.choices(UsageSettings.weeklyPercentChoices, including: self.usage.switchAtWeeklyPercent), id: \.self) { percent in
+                            Text("\(percent)%").tag(percent)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 72)
+                }
+            }
+            Text("An account stops taking work at either limit: the login moves to the \"Next\" account, the one with room under both of its limits whose weekly window resets soonest. If none has room, the login stays put. Running claude sessions pick up a new account within seconds.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Hover an account in the menu to give it its own limits, e.g. a lower weekly limit to keep some of it for claude.ai.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var workHoursSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Work Hours")
+                .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 4) {
+                ForEach(Weekday.localeOrdered(), id: \.self) { day in
+                    Toggle(Self.dayInitial(day), isOn: self.workdayBinding(day))
+                        .toggleStyle(.button)
+                        .controlSize(.small)
+                        .help(Calendar.current.weekdaySymbols[day.rawValue - 1])
+                }
+            }
             HStack(spacing: 10) {
-                Text("Switch when session usage reaches:")
+                Text("From")
                     .font(.system(size: 12))
-                Picker("Switch threshold", selection: self.$usage.switchAtSessionPercent) {
-                    ForEach(self.switchPercentChoices, id: \.self) { percent in
-                        Text("\(percent)%").tag(percent)
+                Picker("Start", selection: self.$usage.workSchedule.startHour) {
+                    ForEach(0..<self.usage.workSchedule.endHour, id: \.self) { hour in
+                        Text(Self.hourLabel(hour)).tag(hour)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 72)
+                .frame(width: 90)
+                Text("to")
+                    .font(.system(size: 12))
+                Picker("End", selection: self.$usage.workSchedule.endHour) {
+                    ForEach((self.usage.workSchedule.startHour + 1)...24, id: \.self) { hour in
+                        Text(Self.hourLabel(hour)).tag(hour)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 90)
             }
-            .disabled(!self.usage.autoSwitchEnabled)
-            Text("Moves the Claude Code login to the \"Next\" account: one with session room to spare, preferring the soonest weekly reset. Running claude sessions pick up the new account within seconds.")
+            Text("Forecasts start from these hours, then follow the rhythm your usage history actually shows.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -148,7 +205,7 @@ struct SettingsView: View {
                 .labelsHidden()
                 .frame(width: 96)
             }
-            Text("While switching automatically, the active account is checked more often as its usage climbs, down to once a minute.")
+            Text("Every reading is kept for five weeks to learn your pace. While switching automatically, the active account is checked more often as its usage climbs, down to once a minute.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -156,8 +213,33 @@ struct SettingsView: View {
     }
 
     /// The fixed choices, plus whatever is saved so the picker never shows blank.
-    private var switchPercentChoices: [Int] {
-        Array(Set(UsageSettings.switchPercentChoices + [self.usage.switchAtSessionPercent])).sorted()
+    private static func choices(_ fixed: [Int], including saved: Int) -> [Int] {
+        Array(Set(fixed + [saved])).sorted()
+    }
+
+    private func workdayBinding(_ day: Weekday) -> Binding<Bool> {
+        Binding(
+            get: { self.usage.workSchedule.workdays.contains(day) },
+            set: { isWorkday in
+                if isWorkday {
+                    self.usage.workSchedule.workdays.insert(day)
+                } else {
+                    self.usage.workSchedule.workdays.remove(day)
+                }
+            })
+    }
+
+    private static func dayInitial(_ day: Weekday) -> String {
+        Calendar.current.veryShortWeekdaySymbols[day.rawValue - 1]
+    }
+
+    /// "9 AM", "Noon", "Midnight" for the end of the day.
+    private static func hourLabel(_ hour: Int) -> String {
+        switch hour {
+        case 0, 24: return "Midnight"
+        case 12: return "Noon"
+        default: return hour < 12 ? "\(hour) AM" : "\(hour - 12) PM"
+        }
     }
 
     private static func intervalLabel(_ interval: TimeInterval) -> String {

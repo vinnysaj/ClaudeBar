@@ -8,13 +8,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let menu: NSMenu
     private var refreshTask: Task<Void, Never>?
     private var pendingAddTask: Task<Void, Never>?
-    private var snapshot: AccountsSnapshot?
-    private var scanProgress: ScanProgress?
-    private var isRefreshing = false
     private var lastCostScanAt: Date?
     private let onCheckForUpdates: (() -> Void)?
     private let hotKeys = HotKeyManager()
-    private var usageSettings = UsageSettings.saved
+    private let model = PanelModel(usageSettings: UsageSettings.saved)
+    /// The accounts the menu's items were built for. Everything else updates
+    /// through `model` without touching the items.
+    private var builtAccountIds: [String]?
+    private var headerItem: NSMenuItem?
 
     private static let costScanInterval: TimeInterval = 15 * 60
 
@@ -26,11 +27,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.menu.delegate = self
         self.statusItem.menu = self.menu
         // Key equivalents only match *enabled* items, and AppKit's auto-enabling has
-        // nothing to validate on an item whose custom view supplies the whole UI.
+        // nothing to validate on items whose custom views supply the whole UI.
         self.menu.autoenablesItems = false
+        self.model.launchAtLogin = SMAppService.mainApp.status == .enabled
 
         self.setIcon(sessionUsed: nil, weeklyUsed: nil, stale: true)
-        self.rebuildMenu()
+        self.rebuildMenuIfNeeded()
         self.startPolling()
 
         self.hotKeys.onFire = { [weak self] in self?.openPanel() }
@@ -46,43 +48,79 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func rebuildMenu() {
+    private lazy var actions = PanelActions(
+        toggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
+        refresh: { [weak self] in Task { await self?.fetchAndUpdate(force: true) } },
+        switchAccount: { [weak self] accountUuid in Task { await self?.switchTo(accountUuid) } },
+        addAccount: { [weak self] in Task { await self?.beginAddAccount() } },
+        cancelAddAccount: { [weak self] in Task { await self?.cancelAddAccount() } },
+        removeAccount: { [weak self] accountUuid, email in
+            Task { await self?.confirmAndRemove(accountUuid: accountUuid, email: email) }
+        },
+        updatePreferences: { [weak self] accountUuid, preferences in
+            Task { await self?.updatePreferences(preferences, for: accountUuid) }
+        },
+        openSettings: { [weak self] in self?.openSettings() },
+        checkForUpdates: self.onCheckForUpdates,
+        quit: { NSApplication.shared.terminate(nil) })
+
+    /// Lays the menu out as a header, the fleet forecast, one item per account,
+    /// and a footer. The fleet line and every account open a hover panel, which
+    /// AppKit only offers per item. Items are rebuilt only when the roster
+    /// changes: rebuilding closes whatever hover panel is open.
+    private func rebuildMenuIfNeeded() {
+        let accountIds = self.model.snapshot?.displays.map(\.id) ?? []
+        guard accountIds != self.builtAccountIds else { return }
+        self.builtAccountIds = accountIds
         self.menu.removeAllItems()
 
-        let cardView = UsageCardView(
-            snapshot: self.snapshot,
-            scanProgress: self.scanProgress,
-            isRefreshing: self.isRefreshing,
-            launchAtLogin: SMAppService.mainApp.status == .enabled,
-            autoSwitchEnabled: self.usageSettings.autoSwitchEnabled,
-            onToggleLaunchAtLogin: { [weak self] in Task { self?.toggleLaunchAtLogin() } },
-            onRefresh: { [weak self] in Task { await self?.fetchAndUpdate(force: true) } },
-            onSwitch: { [weak self] accountUuid in Task { await self?.switchTo(accountUuid) } },
-            onAddAccount: { [weak self] in Task { await self?.beginAddAccount() } },
-            onCancelAddAccount: { [weak self] in Task { await self?.cancelAddAccount() } },
-            onRemove: { [weak self] accountUuid, email in
-                Task { await self?.confirmAndRemove(accountUuid: accountUuid, email: email) }
-            },
-            onOpenSettings: { [weak self] in self?.openSettings() },
-            onCheckForUpdates: self.onCheckForUpdates,
-            onQuit: { NSApplication.shared.terminate(nil) })
-        let hostingView = NSHostingView(rootView: cardView)
-        hostingView.frame.size = hostingView.fittingSize
-
-        let menuItem = NSMenuItem()
-        menuItem.view = hostingView
-        menuItem.isEnabled = true
-        // How the panel closes from the keyboard. NSMenu matches key equivalents
-        // against its items from inside the tracking loop, and selecting an item
-        // dismisses the menu — so the action itself has nothing to do. The hosting
-        // view covers the row, so the equivalent never renders.
-        if let combo = self.hotKeys.combo {
-            menuItem.keyEquivalent = combo.keyEquivalent
-            menuItem.keyEquivalentModifierMask = combo.keyEquivalentModifierMask
-            menuItem.target = self
-            menuItem.action = #selector(self.dismissViaKeyEquivalent)
+        let width = PanelLayout.width
+        let header = HostedMenuItem.make(width: width) {
+            PanelHeaderView(model: self.model, actions: self.actions)
         }
-        self.menu.addItem(menuItem)
+        self.headerItem = header
+        self.applyKeyEquivalent()
+        self.menu.addItem(header)
+
+        if !accountIds.isEmpty {
+            let fleet = HostedMenuItem.make(width: width) { FleetStatusRow(model: self.model) }
+            fleet.submenu = HostedMenuItem.submenu(width: PanelLayout.detailWidth) {
+                FleetDetailView(model: self.model)
+            }
+            self.menu.addItem(fleet)
+        }
+        for (index, accountId) in accountIds.enumerated() {
+            let row = HostedMenuItem.make(width: width) {
+                AccountRow(accountId: accountId, showsDivider: index > 0, model: self.model, actions: self.actions)
+            }
+            row.submenu = HostedMenuItem.submenu(width: PanelLayout.detailWidth) {
+                AccountDetailView(accountId: accountId, model: self.model, actions: self.actions)
+            }
+            self.menu.addItem(row)
+        }
+
+        self.menu.addItem(HostedMenuItem.make(width: width) {
+            PanelFooterView(model: self.model, actions: self.actions)
+        })
+    }
+
+    /// How the panel closes from the keyboard. NSMenu matches key equivalents
+    /// against its items from inside the tracking loop, and selecting an item
+    /// dismisses the menu — so the action itself has nothing to do. The hosting
+    /// view covers the row, so the equivalent never renders.
+    private func applyKeyEquivalent() {
+        guard let headerItem = self.headerItem else { return }
+        if let combo = self.hotKeys.combo {
+            headerItem.keyEquivalent = combo.keyEquivalent
+            headerItem.keyEquivalentModifierMask = combo.keyEquivalentModifierMask
+            headerItem.target = self
+            headerItem.action = #selector(self.dismissViaKeyEquivalent)
+        } else {
+            headerItem.keyEquivalent = ""
+            headerItem.keyEquivalentModifierMask = []
+            headerItem.target = nil
+            headerItem.action = nil
+        }
     }
 
     private func setIcon(sessionUsed: Double?, weeklyUsed: Double?, stale: Bool) {
@@ -94,7 +132,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Icon reflects the ACTIVE account only.
     private func applyIcon() {
-        guard let active = self.snapshot?.displays.first(where: \.isActive),
+        guard let active = self.model.snapshot?.displays.first(where: \.isActive),
               let usage = active.usage
         else {
             self.setIcon(sessionUsed: nil, weeklyUsed: nil, stale: true)
@@ -112,7 +150,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             await self?.bootstrap()
             await self?.fetchAndUpdate(force: false)
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
+                try? await Task.sleep(for: .seconds(AutoSwitchPlanner.pollingTick))
                 await self?.fetchAndUpdate(force: false)
             }
         }
@@ -120,19 +158,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Instant render from the persisted cache before any network round-trip.
     private func bootstrap() async {
-        self.snapshot = await AccountManager.shared.snapshot()
-        self.applyIcon()
-        self.rebuildMenu()
+        await self.refreshSnapshot()
     }
 
     private func fetchAndUpdate(force: Bool) async {
-        guard !self.isRefreshing else { return }
-        self.isRefreshing = true
-        self.rebuildMenu()
-        defer {
-            self.isRefreshing = false
-            self.rebuildMenu()
-        }
+        guard !self.model.isRefreshing else { return }
+        self.model.isRefreshing = true
+        defer { self.model.isRefreshing = false }
 
         await AccountManager.shared.reconcile()
         await AccountManager.shared.refreshUsage(force: force)
@@ -148,10 +180,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func refreshSnapshot() async {
-        self.snapshot = await AccountManager.shared.snapshot()
+        self.model.snapshot = await AccountManager.shared.snapshot()
         self.applyIcon()
-        self.rebuildMenu()
-        if self.snapshot?.isPendingAdd == true {
+        self.rebuildMenuIfNeeded()
+        if self.model.snapshot?.isPendingAdd == true {
             self.startPendingAddLoop()
         }
     }
@@ -166,8 +198,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             for await progress in CostScanner.shared.progressStream {
                 await MainActor.run {
                     guard let self, !progress.isComplete else { return }
-                    self.scanProgress = progress
-                    self.rebuildMenu()
+                    self.model.scanProgress = progress
                 }
             }
         }
@@ -184,22 +215,25 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             cost = await Task.detached { CostScanner.shared.scan(pricing: refreshed) }.value
         }
         progressTask.cancel()
-        self.scanProgress = nil
+        self.model.scanProgress = nil
         self.lastCostScanAt = Date()
 
         await AccountManager.shared.recordCost(cost)
-        self.snapshot = await AccountManager.shared.snapshot()
-        self.rebuildMenu()
+        await self.refreshSnapshot()
     }
 
     // MARK: - Account actions
 
     private func switchTo(_ accountUuid: String) async {
-        self.isRefreshing = true
-        self.rebuildMenu()
+        self.model.isRefreshing = true
         await AccountManager.shared.switchTo(accountUuid: accountUuid)
         await AccountManager.shared.refreshUsage(force: false)
-        self.isRefreshing = false
+        self.model.isRefreshing = false
+        await self.refreshSnapshot()
+    }
+
+    private func updatePreferences(_ preferences: AccountPreferences, for accountUuid: String) async {
+        await AccountManager.shared.setPreferences(preferences, for: accountUuid)
         await self.refreshSnapshot()
     }
 
@@ -225,11 +259,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self else { return }
                 await AccountManager.shared.reconcile()
-                let snapshot = await AccountManager.shared.snapshot()
-                self.snapshot = snapshot
-                self.applyIcon()
-                self.rebuildMenu()
-                if !snapshot.isPendingAdd { return }
+                await self.refreshSnapshot()
+                if self.model.snapshot?.isPendingAdd != true { return }
             }
         }
     }
@@ -251,7 +282,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         MainActor.assumeIsolated {
             self.hotKeys.suspend()
 
-            self.rebuildMenu()
+            self.model.launchAtLogin = SMAppService.mainApp.status == .enabled
             Task { [weak self] in
                 await AccountManager.shared.reconcile()
                 await self?.refreshSnapshot()
@@ -287,9 +318,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func applyUsageSettings(_ settings: UsageSettings) {
-        self.usageSettings = settings
+        self.model.usageSettings = settings
         UsageSettings.saved = settings
-        self.rebuildMenu()
         Task { [weak self] in
             await AccountManager.shared.apply(settings: settings)
             await self?.refreshSnapshot()
@@ -301,11 +331,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         guard let combo else {
             self.hotKeys.unregister()
             HotKeyManager.saved = nil
+            self.applyKeyEquivalent()
             return nil
         }
         do {
             try self.hotKeys.register(combo)
             HotKeyManager.saved = combo
+            self.applyKeyEquivalent()
             return nil
         } catch let error as HotKeyManager.RegistrationError {
             if self.hotKeys.combo != nil {
@@ -328,6 +360,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         } catch {
             NSLog("Failed to update login item: \(error.localizedDescription)")
         }
-        self.rebuildMenu()
+        self.model.launchAtLogin = service.status == .enabled
     }
 }
