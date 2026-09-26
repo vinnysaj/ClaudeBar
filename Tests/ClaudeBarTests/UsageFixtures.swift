@@ -36,15 +36,25 @@ enum UsageFixture {
             isUnlimited: false)
     }
 
-    static func account(id: String, needsRelogin: Bool = false, displayOrder: Int = 0) -> Account {
+    static func account(
+        id: String,
+        needsRelogin: Bool = false,
+        displayOrder: Int = 0,
+        allowsAutoSwitch: Bool = true) -> Account
+    {
         Account(
             id: id,
             email: "\(id)@example.com",
             organizationName: nil,
             oauthAccountRaw: nil,
             displayOrder: displayOrder,
-            needsRelogin: needsRelogin)
+            needsRelogin: needsRelogin,
+            preferences: AccountPreferences(
+                sessionLimit: nil, weeklyLimit: nil, allowsAutoSwitch: allowsAutoSwitch))
     }
+
+    /// The limits `UsageSettings.default` holds accounts to.
+    static let limits = AccountLimits(session: 90, weekly: 95)
 
     static func usage(
         session: UsageMetric? = nil,
@@ -72,11 +82,16 @@ enum UsageFixture {
         isActive: Bool = false,
         displayOrder: Int = 0,
         needsRelogin: Bool = false,
+        allowsAutoSwitch: Bool = true,
+        limits: AccountLimits = UsageFixture.limits,
         fetchedAt: Date = UsageFixture.now) -> AccountDisplay
     {
         AccountDisplay(
             account: UsageFixture.account(
-                id: id, needsRelogin: needsRelogin, displayOrder: displayOrder),
+                id: id,
+                needsRelogin: needsRelogin,
+                displayOrder: displayOrder,
+                allowsAutoSwitch: allowsAutoSwitch),
             usage: UsageFixture.usage(
                 session: UsageFixture.metric(
                     label: "Session", usedPercent: sessionPercent, resetsAt: sessionResetsAt),
@@ -85,7 +100,8 @@ enum UsageFixture {
                 fetchedAt: fetchedAt),
             isActive: isActive,
             isRecommended: false,
-            isStale: false)
+            isStale: false,
+            limits: limits)
     }
 
     /// An account whose usage has never been fetched.
@@ -99,17 +115,21 @@ enum UsageFixture {
             usage: nil,
             isActive: isActive,
             isRecommended: false,
-            isStale: false)
+            isStale: false,
+            limits: UsageFixture.limits)
     }
 
     static func settings(
         refreshInterval: TimeInterval = 5 * 60,
         autoSwitchEnabled: Bool = true,
-        switchAtSessionPercent: Int = 90) -> UsageSettings
+        switchAtSessionPercent: Int = 90,
+        switchAtWeeklyPercent: Int = 95) -> UsageSettings
     {
         UsageSettings(
             refreshInterval: refreshInterval,
             autoSwitchEnabled: autoSwitchEnabled,
-            switchAtSessionPercent: switchAtSessionPercent)
+            switchAtSessionPercent: switchAtSessionPercent,
+            switchAtWeeklyPercent: switchAtWeeklyPercent,
+            workSchedule: .default)
     }
 }
