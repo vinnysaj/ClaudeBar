@@ -10,11 +10,7 @@ enum UsageFixture {
     static let hour: TimeInterval = 60 * 60
     static let day: TimeInterval = 24 * 60 * 60
 
-    /// `now` shifted by `seconds`. Negative values land in the past.
-    static func secondsFromNow(_ seconds: TimeInterval) -> Date {
-        UsageFixture.now.addingTimeInterval(seconds)
-    }
-
+    /// `now` shifted by `minutes`. Negative values land in the past.
     static func minutesFromNow(_ minutes: Double) -> Date {
         UsageFixture.now.addingTimeInterval(minutes * UsageFixture.minute)
     }
@@ -53,21 +49,20 @@ enum UsageFixture {
                 sessionLimit: nil, weeklyLimit: nil, allowsAutoSwitch: allowsAutoSwitch))
     }
 
-    /// The limits `UsageSettings.default` holds accounts to.
+    /// The limits accounts are held to unless a test gives them their own.
     static let limits = AccountLimits(session: 90, weekly: 95)
 
     static func usage(
         session: UsageMetric? = nil,
         weekly: UsageMetric? = nil,
         fable: UsageMetric? = nil,
-        extraUsage: UsageMetric? = nil,
         fetchedAt: Date = UsageFixture.now) -> AccountUsage
     {
         AccountUsage(
             session: session,
             weekly: weekly,
             fable: fable,
-            extraUsage: extraUsage,
+            extraUsage: nil,
             fetchedAt: fetchedAt)
     }
 
@@ -83,8 +78,7 @@ enum UsageFixture {
         displayOrder: Int = 0,
         needsRelogin: Bool = false,
         allowsAutoSwitch: Bool = true,
-        limits: AccountLimits = UsageFixture.limits,
-        fetchedAt: Date = UsageFixture.now) -> AccountDisplay
+        limits: AccountLimits = UsageFixture.limits) -> AccountDisplay
     {
         AccountDisplay(
             account: UsageFixture.account(
@@ -96,8 +90,7 @@ enum UsageFixture {
                 session: UsageFixture.metric(
                     label: "Session", usedPercent: sessionPercent, resetsAt: sessionResetsAt),
                 weekly: UsageFixture.metric(
-                    label: "Week", usedPercent: weeklyPercent, resetsAt: weeklyResetsAt),
-                fetchedAt: fetchedAt),
+                    label: "Week", usedPercent: weeklyPercent, resetsAt: weeklyResetsAt)),
             isActive: isActive,
             isRecommended: false,
             isStale: false,
@@ -121,15 +114,13 @@ enum UsageFixture {
 
     static func settings(
         refreshInterval: TimeInterval = 5 * 60,
-        autoSwitchEnabled: Bool = true,
-        switchAtSessionPercent: Int = 90,
-        switchAtWeeklyPercent: Int = 95) -> UsageSettings
+        autoSwitchEnabled: Bool = true) -> UsageSettings
     {
         UsageSettings(
             refreshInterval: refreshInterval,
             autoSwitchEnabled: autoSwitchEnabled,
-            switchAtSessionPercent: switchAtSessionPercent,
-            switchAtWeeklyPercent: switchAtWeeklyPercent,
+            switchAtSessionPercent: UsageFixture.limits.session,
+            switchAtWeeklyPercent: UsageFixture.limits.weekly,
             workSchedule: .default)
     }
 }
