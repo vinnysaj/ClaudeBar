@@ -3,116 +3,78 @@ import Testing
 @testable import ClaudeBar
 
 private let now = UsageFixture.now
-private let threshold = 90
 
-@Suite("Account usability")
-struct AutoSwitchUsabilityTests {
-    @Test("An account that needs a fresh login cannot take over")
-    func accountNeedingReloginIsNotUsable() {
-        let display = UsageFixture.display(id: "alpha", sessionPercent: 0, needsRelogin: true)
-        #expect(!AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
+/// Ids of the accounts that could take the login over, best first.
+private func rankedIds(_ displays: [AccountDisplay]) -> [String] {
+    AutoSwitchPlanner.rankedCandidates(displays, now: now).map(\.id)
+}
+
+@Suite("Taking over")
+struct AutoSwitchTakeOverTests {
+    @Test("Accounts signed out, never fetched, or closed to auto-switching cannot take over")
+    func unavailableAccountsAreExcluded() {
+        let displays = [
+            UsageFixture.display(id: "loggedOut", needsRelogin: true),
+            UsageFixture.displayWithoutUsage(id: "neverFetched"),
+            UsageFixture.display(id: "optedOut", allowsAutoSwitch: false),
+            UsageFixture.display(id: "spare", sessionPercent: 30),
+        ]
+        #expect(rankedIds(displays) == ["spare"])
     }
 
-    @Test("An account with no usage fetched yet cannot take over")
-    func accountWithoutUsageIsNotUsable() {
-        let display = UsageFixture.displayWithoutUsage(id: "alpha")
-        #expect(!AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
-    }
-
-    @Test("An account with room in both windows can take over")
-    func accountWithRoomIsUsable() {
-        let display = UsageFixture.display(id: "alpha", sessionPercent: 40, weeklyPercent: 60)
-        #expect(AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
-    }
-
-    @Test("An account sitting exactly on the threshold cannot take over")
-    func accountAtTheThresholdIsNotUsable() {
-        let display = UsageFixture.display(id: "alpha", sessionPercent: threshold)
-        #expect(!AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
-    }
-
-    @Test("An account one point below the threshold can take over")
-    func accountJustBelowTheThresholdIsUsable() {
-        let display = UsageFixture.display(id: "alpha", sessionPercent: threshold - 1)
-        #expect(AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
-    }
-
-    @Test("A spent weekly window blocks the account")
-    func accountWithExhaustedWeeklyIsNotUsable() {
+    @Test(
+        "An account needs five session and three weekly points of room under its own limits to take over",
+        arguments: [
+            // Five points under a seventy session limit is enough; four is not.
+            (sessionPercent: 65, weeklyPercent: 0, canTakeOver: true),
+            (sessionPercent: 66, weeklyPercent: 0, canTakeOver: false),
+            // Three points under an eighty weekly limit is enough; two is not.
+            (sessionPercent: 0, weeklyPercent: 77, canTakeOver: true),
+            (sessionPercent: 0, weeklyPercent: 78, canTakeOver: false),
+        ])
+    func minimumRoomUnderOwnLimits(sessionPercent: Int, weeklyPercent: Int, canTakeOver: Bool) {
         let display = UsageFixture.display(
-            id: "alpha",
-            sessionPercent: 0,
-            weeklyPercent: 100,
-            weeklyResetsAt: UsageFixture.daysFromNow(2))
-        #expect(!AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
+            id: "spare",
+            sessionPercent: sessionPercent,
+            weeklyPercent: weeklyPercent,
+            limits: AccountLimits(session: 70, weekly: 80))
+        #expect(rankedIds([display]) == (canTakeOver ? ["spare"] : []))
     }
 
-    @Test("A spent weekly window whose reset has passed no longer blocks the account")
-    func exhaustedWeeklyThatHasResetIsUsable() {
-        let display = UsageFixture.display(
-            id: "alpha",
-            sessionPercent: 0,
-            weeklyPercent: 100,
-            weeklyResetsAt: UsageFixture.minutesFromNow(-5))
-        #expect(AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
-    }
-
-    @Test("A full session whose reset has passed no longer blocks the account")
-    func fullSessionThatHasResetIsUsable() {
-        let display = UsageFixture.display(
-            id: "alpha",
-            sessionPercent: 100,
-            sessionResetsAt: UsageFixture.minutesFromNow(-5))
-        #expect(AutoSwitchPlanner.isUsable(display, threshold: threshold, now: now))
+    @Test("A full window whose reset has passed no longer blocks the account", arguments: UsageWindow.allCases)
+    func fullWindowPastItsResetCanTakeOver(window: UsageWindow) {
+        let fiveMinutesAgo = UsageFixture.minutesFromNow(-5)
+        let display = switch window {
+        case .session:
+            UsageFixture.display(id: "spare", sessionPercent: 100, sessionResetsAt: fiveMinutesAgo)
+        case .weekly:
+            UsageFixture.display(id: "spare", weeklyPercent: 100, weeklyResetsAt: fiveMinutesAgo)
+        }
+        #expect(rankedIds([display]) == ["spare"])
     }
 }
 
 @Suite("Candidate ranking")
 struct AutoSwitchRankingTests {
-    private func rankedIds(_ displays: [AccountDisplay]) -> [String] {
-        AutoSwitchPlanner.rankedCandidates(displays, threshold: threshold, now: now).map(\.id)
-    }
-
     @Test("The account already carrying the login is never a candidate")
     func activeAccountIsExcluded() {
         let displays = [
             UsageFixture.display(id: "active", sessionPercent: 10, isActive: true),
             UsageFixture.display(id: "spare", sessionPercent: 50),
         ]
-        #expect(self.rankedIds(displays) == ["spare"])
+        #expect(rankedIds(displays) == ["spare"])
     }
 
-    @Test("Unusable accounts are filtered out of the ranking")
-    func unusableAccountsAreExcluded() {
-        let displays = [
-            UsageFixture.display(id: "active", sessionPercent: 95, isActive: true),
-            UsageFixture.display(id: "loggedOut", sessionPercent: 0, needsRelogin: true),
-            UsageFixture.displayWithoutUsage(id: "neverFetched"),
-            UsageFixture.display(id: "sessionSpent", sessionPercent: 90),
-            UsageFixture.display(
-                id: "weeklySpent",
-                sessionPercent: 0,
-                weeklyPercent: 100,
-                weeklyResetsAt: UsageFixture.daysFromNow(1)),
-            UsageFixture.display(id: "spare", sessionPercent: 30),
-        ]
-        #expect(self.rankedIds(displays) == ["spare"])
-    }
-
-    @Test("Comfortable session headroom beats a sooner weekly reset")
-    func comfortableHeadroomOutranksAnEarlierWeeklyReset() {
-        let comfortableBoundary = threshold - AutoSwitchPlanner.comfortableHeadroom
+    @Test("Comfortable session room beats a sooner weekly reset")
+    func comfortableRoomOutranksAnEarlierWeeklyReset() {
+        // Seventy leaves exactly twenty points under the ninety limit; seventy-one leaves nineteen.
         let displays = [
             UsageFixture.display(
-                id: "tight",
-                sessionPercent: comfortableBoundary + 1,
-                weeklyResetsAt: UsageFixture.daysFromNow(1)),
+                id: "tight", sessionPercent: 71, weeklyResetsAt: UsageFixture.daysFromNow(1)),
             UsageFixture.display(
-                id: "comfortable",
-                sessionPercent: comfortableBoundary,
-                weeklyResetsAt: UsageFixture.daysFromNow(6)),
+                id: "comfortable", sessionPercent: 70, weeklyResetsAt: UsageFixture.daysFromNow(6)),
         ]
-        #expect(self.rankedIds(displays) == ["comfortable", "tight"])
+        #expect(rankedIds(displays) == ["comfortable", "tight"])
     }
 
     @Test("Among comfortable accounts the weekly capacity that expires first is spent first")
@@ -123,7 +85,7 @@ struct AutoSwitchRankingTests {
             UsageFixture.display(
                 id: "sooner", sessionPercent: 60, weeklyResetsAt: UsageFixture.daysFromNow(2)),
         ]
-        #expect(self.rankedIds(displays) == ["sooner", "later"])
+        #expect(rankedIds(displays) == ["sooner", "later"])
     }
 
     @Test("A weekly reset already behind us counts as a full week away")
@@ -136,7 +98,7 @@ struct AutoSwitchRankingTests {
             UsageFixture.display(
                 id: "twoDays", sessionPercent: 20, weeklyResetsAt: UsageFixture.daysFromNow(2)),
         ]
-        #expect(self.rankedIds(displays) == ["twoDays", "alreadyReset", "eightDays"])
+        #expect(rankedIds(displays) == ["twoDays", "alreadyReset", "eightDays"])
     }
 
     @Test("An account with no known weekly reset sorts last")
@@ -146,17 +108,22 @@ struct AutoSwitchRankingTests {
             UsageFixture.display(
                 id: "knownReset", sessionPercent: 50, weeklyResetsAt: UsageFixture.daysFromNow(8)),
         ]
-        #expect(self.rankedIds(displays) == ["knownReset", "unknownReset"])
+        #expect(rankedIds(displays) == ["knownReset", "unknownReset"])
     }
 
-    @Test("The emptier session breaks a tie on weekly reset")
-    func sessionPercentBreaksTies() {
+    @Test("More session room under its own limit breaks a tie on weekly reset")
+    func sessionRoomBreaksTies() {
         let sharedReset = UsageFixture.daysFromNow(3)
+        // Thirty of a ninety limit leaves sixty points; twenty of a seventy limit leaves fifty.
         let displays = [
-            UsageFixture.display(id: "busier", sessionPercent: 40, weeklyResetsAt: sharedReset),
-            UsageFixture.display(id: "emptier", sessionPercent: 10, weeklyResetsAt: sharedReset),
+            UsageFixture.display(
+                id: "emptier",
+                sessionPercent: 20,
+                weeklyResetsAt: sharedReset,
+                limits: AccountLimits(session: 70, weekly: 95)),
+            UsageFixture.display(id: "roomier", sessionPercent: 30, weeklyResetsAt: sharedReset),
         ]
-        #expect(self.rankedIds(displays) == ["emptier", "busier"])
+        #expect(rankedIds(displays) == ["roomier", "emptier"])
     }
 
     @Test("Accounts tied on every measure fall back to roster order")
@@ -173,17 +140,8 @@ struct AutoSwitchRankingTests {
             weeklyResetsAt: sharedReset,
             displayOrder: 2)
         let expected = ["earlierInRoster", "laterInRoster"]
-        #expect(self.rankedIds([earlierInRoster, laterInRoster]) == expected)
-        #expect(self.rankedIds([laterInRoster, earlierInRoster]) == expected)
-    }
-
-    @Test("With nothing usable the ranking is empty")
-    func noUsableAccountsRanksNothing() {
-        let displays = [
-            UsageFixture.display(id: "active", sessionPercent: 95, isActive: true),
-            UsageFixture.display(id: "spent", sessionPercent: 99),
-        ]
-        #expect(self.rankedIds(displays).isEmpty)
+        #expect(rankedIds([earlierInRoster, laterInRoster]) == expected)
+        #expect(rankedIds([laterInRoster, earlierInRoster]) == expected)
     }
 }
 
@@ -200,13 +158,13 @@ struct AutoSwitchDecisionTests {
     private func decide(
         _ displays: [AccountDisplay],
         settings: UsageSettings = UsageFixture.settings(),
-        activeRatePercentPerHour: Double? = nil,
+        activePace: CurrentPace? = nil,
         lastManualSwitchAt: Date? = nil) -> AutoSwitchPlanner.Decision
     {
         AutoSwitchPlanner.decide(
             displays: displays,
             settings: settings,
-            activeRatePercentPerHour: activeRatePercentPerHour,
+            activePace: activePace,
             lastManualSwitchAt: lastManualSwitchAt,
             now: now)
     }
@@ -219,57 +177,52 @@ struct AutoSwitchDecisionTests {
         #expect(decision == .stay)
     }
 
-    @Test("With no account carrying the login there is nothing to move")
-    func noActiveAccountStays() {
-        #expect(self.decide(self.spares) == .stay)
-    }
-
-    @Test("An active account with no usage fetched yet is left alone")
-    func activeAccountWithoutUsageStays() {
-        let displays = [UsageFixture.displayWithoutUsage(id: "active", isActive: true)] + self.spares
-        #expect(self.decide(displays) == .stay)
-    }
-
-    @Test("An active account with room to spare is left alone")
-    func activeAccountBelowThresholdStays() {
-        let displays = [UsageFixture.display(id: "active", sessionPercent: 40, isActive: true)]
-            + self.spares
-        #expect(self.decide(displays) == .stay)
-    }
-
-    @Test("Hitting the session threshold hands the login to the best candidate")
-    func sessionAtThresholdSwitches() {
-        let displays = [UsageFixture.display(id: "active", sessionPercent: 90, isActive: true)]
-            + self.spares
-        #expect(self.decide(displays) == .switchTo(accountId: "sooner", reason: "session at 90%"))
-    }
-
-    @Test("A spent weekly window moves the login even with a quiet session")
-    func exhaustedWeeklySwitches() {
+    @Test("Reaching its own session limit hands the login to the best candidate")
+    func sessionAtItsLimitSwitches() {
         let active = UsageFixture.display(
             id: "active",
-            sessionPercent: 5,
-            weeklyPercent: 100,
-            weeklyResetsAt: UsageFixture.daysFromNow(3),
-            isActive: true)
+            sessionPercent: 70,
+            isActive: true,
+            limits: AccountLimits(session: 70, weekly: 95))
         #expect(
             self.decide([active] + self.spares)
-                == .switchTo(accountId: "sooner", reason: "weekly limit used up"))
+                == .switchTo(accountId: "sooner", reason: .sessionAtLimit(percent: 70, limit: 70)))
     }
 
-    @Test("A session climbing into the threshold before the next poll moves the login early")
-    func fastClimbSwitchesBeforeTheThreshold() {
-        let displays = [UsageFixture.display(id: "active", sessionPercent: 70, isActive: true)]
+    @Test("Reaching its own weekly limit moves the login, whatever the session", arguments: [10, 70])
+    func weeklyAtItsLimitSwitches(sessionPercent: Int) {
+        // At seventy the session is at its own limit too, and the weekly limit is still the reason.
+        let active = UsageFixture.display(
+            id: "active",
+            sessionPercent: sessionPercent,
+            weeklyPercent: 80,
+            weeklyResetsAt: UsageFixture.daysFromNow(3),
+            isActive: true,
+            limits: AccountLimits(session: 70, weekly: 80))
+        #expect(
+            self.decide([active] + self.spares)
+                == .switchTo(accountId: "sooner", reason: .weeklyAtLimit(percent: 80, limit: 80)))
+    }
+
+    @Test("A session climbing into its limit before the next check moves the login early")
+    func fastClimbSwitchesBeforeTheLimit() {
+        // Ten points to go at ten a minute is one minute away.
+        let displays = [UsageFixture.display(id: "active", sessionPercent: 80, isActive: true)]
             + self.spares
-        let decision = self.decide(displays, activeRatePercentPerHour: 300)
-        #expect(decision == .switchTo(accountId: "sooner", reason: "session at 70% and climbing fast"))
+        let decision = self.decide(
+            displays, activePace: CurrentPace(sessionPerHour: 600, weeklyPerHour: nil))
+        #expect(
+            decision == .switchTo(accountId: "sooner", reason: .sessionClimbing(percent: 80, limit: 90)))
     }
 
     @Test("A session climbing slowly stays put")
     func slowClimbStays() {
-        let displays = [UsageFixture.display(id: "active", sessionPercent: 70, isActive: true)]
+        // Ten points to go at one a minute is ten minutes away, beyond the next check.
+        let displays = [UsageFixture.display(id: "active", sessionPercent: 80, isActive: true)]
             + self.spares
-        #expect(self.decide(displays, activeRatePercentPerHour: 60) == .stay)
+        let decision = self.decide(
+            displays, activePace: CurrentPace(sessionPerHour: 60, weeklyPerHour: nil))
+        #expect(decision == .stay)
     }
 
     @Test("A cached full session whose window has since reset is not a reason to move")
@@ -287,9 +240,9 @@ struct AutoSwitchDecisionTests {
         let displays = [
             UsageFixture.display(id: "active", sessionPercent: 95, isActive: true),
             UsageFixture.display(id: "alsoSpent", sessionPercent: 95),
-            UsageFixture.display(id: "loggedOut", sessionPercent: 0, needsRelogin: true),
+            UsageFixture.display(id: "loggedOut", needsRelogin: true),
         ]
-        #expect(self.decide(displays) == .noCandidate(reason: "session at 95%"))
+        #expect(self.decide(displays) == .noCandidate(reason: .sessionAtLimit(percent: 95, limit: 90)))
     }
 
     @Test("A switch the user just made by hand is left alone")
@@ -300,139 +253,87 @@ struct AutoSwitchDecisionTests {
         #expect(decision == .stay)
     }
 
-    @Test("Once the grace period is over a manual choice no longer holds the login")
-    func manualSwitchStopsHoldingAfterTheGracePeriod() {
-        let displays = [UsageFixture.display(id: "active", sessionPercent: 95, isActive: true)]
-            + self.spares
-        let decision = self.decide(displays, lastManualSwitchAt: UsageFixture.minutesFromNow(-6))
-        #expect(decision == .switchTo(accountId: "sooner", reason: "session at 95%"))
-    }
-
     @Test("The grace period ends exactly when it elapses")
     func manualSwitchGraceIsExclusiveAtItsEnd() {
         let displays = [UsageFixture.display(id: "active", sessionPercent: 95, isActive: true)]
             + self.spares
         let elapsed = now.addingTimeInterval(-AutoSwitchPlanner.manualSwitchGrace)
-        #expect(self.decide(displays, lastManualSwitchAt: elapsed)
-            == .switchTo(accountId: "sooner", reason: "session at 95%"))
+        #expect(
+            self.decide(displays, lastManualSwitchAt: elapsed)
+                == .switchTo(accountId: "sooner", reason: .sessionAtLimit(percent: 95, limit: 90)))
     }
 }
 
 @Suite("Polling pace")
 struct AutoSwitchPacingTests {
+    private let baseInterval: TimeInterval = 5 * 60
+
+    /// How long the active account may go unchecked, as `AccountManager` asks for it.
+    private func interval(
+        sessionPercent: Int,
+        weeklyPercent: Int = 0,
+        pace: CurrentPace?,
+        autoSwitchEnabled: Bool = true) -> TimeInterval
+    {
+        let active = UsageFixture.display(
+            id: "active", sessionPercent: sessionPercent, weeklyPercent: weeklyPercent, isActive: true)
+        return AutoSwitchPlanner.activeRefreshInterval(
+            active: AutoSwitchPlanner.Candidate(display: active, now: now),
+            pace: pace,
+            settings: UsageFixture.settings(
+                refreshInterval: self.baseInterval, autoSwitchEnabled: autoSwitchEnabled))
+    }
+
     @Test("With auto-switching off the base interval stands however fast usage climbs")
     func disabledAutoSwitchUsesTheBaseInterval() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
+        let interval = self.interval(
             sessionPercent: 85,
-            ratePercentPerHour: 600,
-            settings: UsageFixture.settings(refreshInterval: 300, autoSwitchEnabled: false))
-        #expect(interval == 300)
+            pace: CurrentPace(sessionPerHour: 600, weeklyPerHour: nil),
+            autoSwitchEnabled: false)
+        #expect(interval == self.baseInterval)
     }
 
-    @Test("Without a measured rate the base interval stands")
-    func missingRateUsesTheBaseInterval() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 85,
-            ratePercentPerHour: nil,
-            settings: UsageFixture.settings(refreshInterval: 300))
-        #expect(interval == 300)
+    @Test(
+        "Usage that isn't climbing keeps the base interval",
+        arguments: [nil, CurrentPace(sessionPerHour: -40, weeklyPerHour: -40)])
+    func noClimbUsesTheBaseInterval(pace: CurrentPace?) {
+        #expect(self.interval(sessionPercent: 85, pace: pace) == self.baseInterval)
     }
 
-    @Test("A session standing still keeps the base interval")
-    func zeroRateUsesTheBaseInterval() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 85,
-            ratePercentPerHour: 0,
-            settings: UsageFixture.settings(refreshInterval: 300))
-        #expect(interval == 300)
+    @Test("A limit hours away is still polled at the base interval")
+    func distantLimitUsesTheBaseInterval() {
+        // Eighty points to go at one an hour is eighty hours away.
+        let interval = self.interval(
+            sessionPercent: 10, pace: CurrentPace(sessionPerHour: 1, weeklyPerHour: nil))
+        #expect(interval == self.baseInterval)
     }
 
-    @Test("A session that fell back after a reset keeps the base interval")
-    func negativeRateUsesTheBaseInterval() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 85,
-            ratePercentPerHour: -40,
-            settings: UsageFixture.settings(refreshInterval: 300))
-        #expect(interval == 300)
-    }
-
-    @Test("A threshold hours away never polls faster than the base interval")
-    func distantThresholdUsesTheBaseInterval() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 10,
-            ratePercentPerHour: 1,
-            settings: UsageFixture.settings(refreshInterval: 300))
-        #expect(interval == 300)
-    }
-
-    @Test("A threshold minutes away is polled twice before it arrives")
-    func nearThresholdPollsAtHalfTheTimeRemaining() {
-        // Ten points to go at eighty an hour is 450 seconds of headroom.
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 80,
-            ratePercentPerHour: 80,
-            settings: UsageFixture.settings(refreshInterval: 300))
+    @Test(
+        "The nearer limit is polled twice before it arrives",
+        arguments: [
+            // Ten session points to go at eighty an hour is 450 seconds; the weekly limit is hours off.
+            (sessionPercent: 80, weeklyPercent: 50, pace: CurrentPace(sessionPerHour: 80, weeklyPerHour: 10)),
+            // Five weekly points to go at forty an hour is 450 seconds; the session limit is hours off.
+            (sessionPercent: 50, weeklyPercent: 90, pace: CurrentPace(sessionPerHour: 10, weeklyPerHour: 40)),
+        ])
+    func nearerLimitPollsAtHalfTheTimeRemaining(sessionPercent: Int, weeklyPercent: Int, pace: CurrentPace) {
+        let interval = self.interval(
+            sessionPercent: sessionPercent, weeklyPercent: weeklyPercent, pace: pace)
         #expect(interval == 225)
     }
 
-    @Test("A session about to hit the threshold still polls no faster than the floor")
-    func imminentThresholdIsClampedToTheFloor() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 89,
-            ratePercentPerHour: 3600,
-            settings: UsageFixture.settings(refreshInterval: 300))
+    @Test(
+        "A limit seconds away or already reached is polled at the floor",
+        arguments: [
+            // One point to go at a point a second is one second away.
+            (sessionPercent: 89, sessionPerHour: 3600.0),
+            // At the limit there is no time left at all.
+            (sessionPercent: 90, sessionPerHour: 10.0),
+        ])
+    func imminentLimitPollsAtTheFloor(sessionPercent: Int, sessionPerHour: Double) {
+        let interval = self.interval(
+            sessionPercent: sessionPercent,
+            pace: CurrentPace(sessionPerHour: sessionPerHour, weeklyPerHour: nil))
         #expect(interval == AutoSwitchPlanner.fastestRefresh)
-    }
-
-    @Test("A session already at the threshold polls at the floor")
-    func sessionAtTheThresholdPollsAtTheFloor() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 90,
-            ratePercentPerHour: 10,
-            settings: UsageFixture.settings(refreshInterval: 300))
-        #expect(interval == AutoSwitchPlanner.fastestRefresh)
-    }
-
-    @Test("A session past the threshold polls at the floor")
-    func sessionPastTheThresholdPollsAtTheFloor() {
-        let interval = AutoSwitchPlanner.activeRefreshInterval(
-            sessionPercent: 96,
-            ratePercentPerHour: 10,
-            settings: UsageFixture.settings(refreshInterval: 300))
-        #expect(interval == AutoSwitchPlanner.fastestRefresh)
-    }
-
-    @Test("Without a rate the projection is the current reading")
-    func projectionWithoutARateIsTheCurrentPercent() {
-        #expect(
-            AutoSwitchPlanner.projectedSessionPercent(
-                from: 50, ratePercentPerHour: nil, over: 300) == 50)
-    }
-
-    @Test("A flat or falling rate projects no growth")
-    func projectionWithoutGrowthIsTheCurrentPercent() {
-        #expect(
-            AutoSwitchPlanner.projectedSessionPercent(from: 50, ratePercentPerHour: 0, over: 300) == 50)
-        #expect(
-            AutoSwitchPlanner.projectedSessionPercent(from: 50, ratePercentPerHour: -30, over: 300)
-                == 50)
-    }
-
-    @Test("The projection adds the growth expected over the interval")
-    func projectionAddsTheExpectedGrowth() {
-        // A hundred points an hour over five minutes is eight and a third points.
-        #expect(
-            AutoSwitchPlanner.projectedSessionPercent(from: 50, ratePercentPerHour: 100, over: 300)
-                == 58)
-        #expect(
-            AutoSwitchPlanner.projectedSessionPercent(from: 70, ratePercentPerHour: 300, over: 300)
-                == 95)
-    }
-
-    @Test("A projection may run past a full window")
-    func projectionCanExceedFull() {
-        #expect(
-            AutoSwitchPlanner.projectedSessionPercent(from: 80, ratePercentPerHour: 120, over: 1800)
-                == 140)
     }
 }
