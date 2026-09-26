@@ -52,8 +52,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         toggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
         refresh: { [weak self] in Task { await self?.fetchAndUpdate(force: true) } },
         switchAccount: { [weak self] accountUuid in Task { await self?.switchTo(accountUuid) } },
-        signIn: { [weak self] email in self?.startSignIn(email: email) },
+        signIn: { [weak self] accountId in self?.startSignIn(accountId: accountId) },
         cancelSignIn: { [weak self] in self?.cancelSignIn() },
+        openSignInPage: { [weak self] in self?.openSignInPage() },
+        copySignInLink: { [weak self] in self?.copySignInLink() },
+        pasteSignInCode: { [weak self] in self?.pasteSignInCode() },
         removeAccount: { [weak self] accountUuid, email in
             Task { await self?.confirmAndRemove(accountUuid: accountUuid, email: email) }
         },
@@ -237,15 +240,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Signs into an account in the claude CLI beside the live login, so running
     /// sessions carry on untouched, then takes the account in.
-    private func startSignIn(email: String?) {
+    private func startSignIn(accountId: String?) {
         guard self.signIn == nil else { return }
+        let email = accountId.flatMap { self.model.display(for: $0)?.account.email }
         let signIn = ClaudeSignIn()
         self.signIn = signIn
-        self.model.signIn = SignInProgress(email: email, pageURL: nil)
+        self.model.signIn = SignInProgress(accountId: accountId, email: email)
         Task { [weak self] in
             do {
-                let credentials = try await signIn.run(email: email) { [weak self] pageURL in
-                    self?.model.signIn?.pageURL = pageURL
+                let credentials = try await signIn.run(email: email) { [weak self] page in
+                    self?.present(page)
                 }
                 await AccountManager.shared.adoptSignIn(credentials)
             } catch is CancellationError {
@@ -262,6 +266,47 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Stops a sign-in in progress, closing the claude process running it.
     func cancelSignIn() {
         self.signIn?.cancel()
+    }
+
+    /// Hands the sign-in page over the way Settings asks: opened in the default
+    /// browser, or copied for whichever browser the user pastes it into.
+    private func present(_ page: SignInPage) {
+        self.model.signIn?.page = page
+        switch SignInLinkBehavior.saved {
+        case .open:
+            self.openSignInPage()
+        case .copy:
+            self.copySignInLink()
+        }
+    }
+
+    private func openSignInPage() {
+        guard let page = self.model.signIn?.page else { return }
+        if NSWorkspace.shared.open(page.url) {
+            self.model.signIn?.problem = nil
+        } else {
+            self.model.signIn?.problem = "Couldn't open a browser. Copy the link and paste it into one instead."
+        }
+    }
+
+    private func copySignInLink() {
+        guard let page = self.model.signIn?.page else { return }
+        NSPasteboard.general.clearContents()
+        if NSPasteboard.general.setString(page.url.absoluteString, forType: .string) {
+            self.model.signIn?.isLinkCopied = true
+            self.model.signIn?.problem = nil
+        } else {
+            self.model.signIn?.problem = "Couldn't copy the link to the clipboard."
+        }
+    }
+
+    private func pasteSignInCode() {
+        do {
+            try self.signIn?.submitCode(NSPasteboard.general.string(forType: .string) ?? "")
+            self.model.signIn?.problem = nil
+        } catch {
+            self.model.signIn?.problem = String(describing: error)
+        }
     }
 
     private func confirmAndRemove(accountUuid: String, email: String) async {
@@ -313,7 +358,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.menu.cancelTracking()
         SettingsWindowController.shared.show(handlers: SettingsHandlers(
             applyCombo: { [weak self] combo in self?.applyHotKey(combo) },
-            applyUsageSettings: { [weak self] settings in self?.applyUsageSettings(settings) }))
+            applyUsageSettings: { [weak self] settings in self?.applyUsageSettings(settings) },
+            applySignInLinkBehavior: { behavior in SignInLinkBehavior.saved = behavior }))
     }
 
     private func applyUsageSettings(_ settings: UsageSettings) {

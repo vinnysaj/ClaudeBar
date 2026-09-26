@@ -48,8 +48,20 @@ struct AccountRow: View {
                     .buttonStyle(.hoverBackgroundIcon)
                     .help("Remove account")
                 }
-                if display.account.needsRelogin {
-                    Button("Sign In") { self.actions.signIn(display.account.email) }
+                if self.model.signIn?.accountId == display.id {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.5)
+                        .frame(width: 12, height: 12)
+                    Text("Signing in")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Button("Cancel", action: self.actions.cancelSignIn)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .font(.system(size: 10))
+                } else if display.account.needsRelogin {
+                    Button("Sign In") { self.actions.signIn(display.id) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .font(.system(size: 10))

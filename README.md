@@ -4,7 +4,7 @@ A macOS menu-bar app for tracking Claude Code usage across multiple Anthropic ac
 
 - Shows session, weekly, and per-model usage for every signed-in account at once
 - One-click account switching: ClaudeBar swaps the credentials Claude Code reads, and running `claude` sessions pick up the new account within seconds
-- Add accounts without touching the login your `claude` sessions run on: Add Account runs Claude Code's own sign-in in a separate config home, stores the new account, and cleans up after itself. A signed-out account gets a Sign In button the same way. Running `/login` in `claude` still works too — ClaudeBar detects and stores that account automatically
+- Add accounts without touching the login your `claude` sessions run on: Add Account runs Claude Code's own sign-in in a separate config home, stores the new account, and cleans up after itself. A signed-out account gets a Sign In button the same way. The sign-in page opens in your default browser, or Settings can have ClaudeBar copy its link instead, to paste into any browser or profile on this Mac. Running `/login` in `claude` still works too — ClaudeBar detects and stores that account automatically
 - Session and weekly limits for every account, with per-account overrides: give your main account a lower weekly limit and the rest stays free for claude.ai
 - A "Next" badge recommends the account with room under both of its limits whose weekly window resets soonest
 - Optional auto-switching moves the login to that account before the active one reaches either limit, polling faster the harder a session is being used, and stays put rather than landing on an account that's nearly full (off by default; configure it from the gear icon)

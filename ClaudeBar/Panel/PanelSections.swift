@@ -97,7 +97,7 @@ struct PanelFooterView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let signIn = self.model.signIn {
-                SignInProgressRow(progress: signIn, onCancel: self.actions.cancelSignIn)
+                SignInProgressRow(progress: signIn, actions: self.actions)
             }
             Divider().padding(.vertical, 6)
             self.controls
@@ -167,9 +167,7 @@ struct BannerView: View {
 /// A sign-in running in the claude CLI: where to finish it, and a way out.
 struct SignInProgressRow: View {
     let progress: SignInProgress
-    let onCancel: () -> Void
-
-    @Environment(\.openURL) private var openURL
+    let actions: PanelActions
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -178,25 +176,46 @@ struct SignInProgressRow: View {
                 ProgressView()
                     .controlSize(.small)
                     .scaleEffect(0.6)
-                Text("Finish signing in to \(self.progress.email ?? "the account to add") in your browser. Claude Code's current login stays as it is.")
+                Text(self.message)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 4) {
-                if let pageURL = self.progress.pageURL {
-                    Button("Open Sign-in Page") { self.openURL(pageURL) }
-                        .buttonStyle(.hoverBackground)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                Button("Cancel", action: self.onCancel)
-                    .buttonStyle(.hoverBackground)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+            if let problem = self.progress.problem {
+                Text(problem)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            HStack(spacing: 4) {
+                if let page = self.progress.page {
+                    Button("Open Page", action: self.actions.openSignInPage)
+                    Button(self.progress.isLinkCopied ? "Copy Again" : "Copy Link", action: self.actions.copySignInLink)
+                    if page.endsOnCode {
+                        Button("Paste Code", action: self.actions.pasteSignInCode)
+                    }
+                }
+                Button("Cancel", action: self.actions.cancelSignIn)
+            }
+            .buttonStyle(.hoverBackground)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
             .padding(.leading, -HoverBackgroundButtonStyle.textInset)
         }
+    }
+
+    private var message: String {
+        let account = self.progress.email ?? "the account to add"
+        guard let page = self.progress.page else {
+            return "Starting the sign-in to \(account)..."
+        }
+        if page.endsOnCode {
+            return "Sign in to \(account), copy the code the page ends on, then click Paste Code."
+        }
+        if self.progress.isLinkCopied {
+            return "Sign-in link copied. Paste it into any browser on this Mac and sign in to \(account); ClaudeBar takes it from there."
+        }
+        return "Sign in to \(account) in your browser; ClaudeBar takes it from there."
     }
 }
 

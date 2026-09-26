@@ -8,6 +8,7 @@ struct SettingsHandlers {
     /// failure, or nil on success.
     let applyCombo: (KeyCombo?) -> String?
     let applyUsageSettings: (UsageSettings) -> Void
+    let applySignInLinkBehavior: (SignInLinkBehavior) -> Void
 }
 
 /// The app's only window. Single-instance: reopening brings the existing one forward
@@ -28,6 +29,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             rootView: SettingsView(
                 combo: HotKeyManager.saved,
                 usage: UsageSettings.saved,
+                signInLink: SignInLinkBehavior.saved,
                 handlers: handlers))
         hostingView.frame.size = hostingView.fittingSize
 
@@ -63,6 +65,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 struct SettingsView: View {
     @State var combo: KeyCombo?
     @State var usage: UsageSettings
+    @State var signInLink: SignInLinkBehavior
     @State private var errorMessage: String?
 
     let handlers: SettingsHandlers
@@ -76,6 +79,8 @@ struct SettingsView: View {
             self.workHoursSection
             Divider()
             self.refreshSection
+            Divider()
+            self.signInSection
         }
         .padding(20)
         .frame(width: 400, alignment: .leading)
@@ -84,6 +89,30 @@ struct SettingsView: View {
         }
         .onChange(of: self.usage) { _, newValue in
             self.handlers.applyUsageSettings(newValue)
+        }
+        .onChange(of: self.signInLink) { _, newValue in
+            self.handlers.applySignInLinkBehavior(newValue)
+        }
+    }
+
+    private var signInSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Signing In")
+                .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 10) {
+                Text("Sign-in page:")
+                    .font(.system(size: 12))
+                Picker("Sign-in page", selection: self.$signInLink) {
+                    Text("Open in default browser").tag(SignInLinkBehavior.open)
+                    Text("Copy link").tag(SignInLinkBehavior.copy)
+                }
+                .labelsHidden()
+                .frame(width: 190)
+            }
+            Text("Add Account and Sign In run Claude Code's own sign-in without touching the login your claude sessions use. Copy the link to open it in another browser or profile on this Mac; the sign-in finishes there on its own.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

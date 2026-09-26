@@ -21,6 +21,8 @@ final class ClaudeSignIn {
         case launchFailed(String)
         case loginFailed(String)
         case credentialsMissing
+        case notASignInCode
+        case codeNotDelivered(String)
 
         var description: String {
             switch self {
@@ -32,22 +34,31 @@ final class ClaudeSignIn {
                 return "Sign-in failed: \(reason)"
             case .credentialsMissing:
                 return "The sign-in finished, but Claude Code stored the credentials somewhere ClaudeBar doesn't look."
+            case .notASignInCode:
+                return "The clipboard doesn't hold a sign-in code. Copy the code the sign-in page shows, then try again."
+            case .codeNotDelivered(let reason):
+                return "Couldn't hand the code to claude: \(reason)"
             }
         }
     }
 
     /// The CLI once it's running; `cancel()` closes it.
     private var process: Process?
+    /// Where the CLI reads a pasted sign-in code from.
+    private var input: Pipe?
     private var isCancelled = false
 
-    /// Signs in and returns the account's credentials. The CLI opens the sign-in
-    /// page in the browser, pre-filled with `email` when given, and exits once
-    /// the account is signed in. `onPageURL` gets the page's address as soon as
-    /// the CLI prints it, for when the browser didn't open. Throws
+    /// How long after printing the manual page the CLI hands the automatic one
+    /// to the browser; it does so straight away, so this is generous.
+    private static let automaticPageWait: Duration = .seconds(3)
+
+    /// Signs in and returns the account's credentials, pre-filling `email` on
+    /// the sign-in page when given. Rather than opening the page, the CLI hands
+    /// it to `onPage`, and exits once the account is signed in. Throws
     /// `CancellationError` after `cancel()`.
-    func run(email: String?, onPageURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> Credentials {
+    func run(email: String?, onPage: @escaping @MainActor @Sendable (SignInPage) -> Void) async throws -> Credentials {
         do {
-            let credentials = try await self.signIn(email: email, onPageURL: onPageURL)
+            let credentials = try await self.signIn(email: email, onPage: onPage)
             await Task.detached { SignInHome.removeLeftovers() }.value
             return credentials
         } catch {
@@ -62,14 +73,33 @@ final class ClaudeSignIn {
         self.process?.terminate()
     }
 
-    private func signIn(email: String?, onPageURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> Credentials {
+    /// Hands the CLI the code a manual sign-in page ends on, which it takes as
+    /// `code#state`. `text` is checked for that shape first: the CLI answers
+    /// anything else by waiting for another try.
+    func submitCode(_ text: String) throws {
+        let code = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = code.split(separator: "#", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty }), !code.contains(where: \.isWhitespace) else {
+            throw Failure.notASignInCode
+        }
+        guard let input = self.input else {
+            throw Failure.codeNotDelivered("the sign-in isn't running.")
+        }
+        do {
+            try input.fileHandleForWriting.write(contentsOf: Data("\(code)\n".utf8))
+        } catch {
+            throw Failure.codeNotDelivered(error.localizedDescription)
+        }
+    }
+
+    private func signIn(email: String?, onPage: @escaping @MainActor @Sendable (SignInPage) -> Void) async throws -> Credentials {
         guard let executable = await Task.detached(operation: { ClaudeCLI.locate() }).value else {
             throw Failure.cliNotFound
         }
         await Task.detached { SignInHome.removeLeftovers() }.value
         guard !self.isCancelled else { throw CancellationError() }
         do {
-            try FileManager.default.createDirectory(at: SignInHome.url, withIntermediateDirectories: true)
+            try SignInHome.prepare()
         } catch {
             throw Failure.launchFailed(error.localizedDescription)
         }
@@ -85,10 +115,16 @@ final class ClaudeSignIn {
         environment["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = SignInHome.path
         // With this set, the CLI signs in from the token instead of the browser.
         environment.removeValue(forKey: "CLAUDE_CODE_OAUTH_REFRESH_TOKEN")
+        // The CLI prints a manual page, which ends on a code to paste back, and
+        // gives the browser an automatic one, which hands the sign-in back to
+        // it on its own. The recorder catches the automatic page for ClaudeBar
+        // to open or copy.
+        environment["BROWSER"] = SignInHome.browserRecorder.path
         process.environment = environment
 
-        let (status, errors) = try await self.runToExit(process, onPageURL: onPageURL)
+        let (status, errors) = try await self.runToExit(process, onPage: onPage)
         self.process = nil
+        self.input = nil
 
         guard !self.isCancelled else { throw CancellationError() }
         guard status == 0 else {
@@ -98,24 +134,26 @@ final class ClaudeSignIn {
     }
 
     private func runToExit(
-        _ process: Process, onPageURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> (status: Int32, errors: String)
+        _ process: Process, onPage: @escaping @MainActor @Sendable (SignInPage) -> Void) async throws -> (status: Int32, errors: String)
     {
         let transcript = OSAllocatedUnfairLock(initialState: Transcript())
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
-        // Left open: the CLI keeps waiting on the browser while it can still
-        // read a pasted sign-in code from here.
-        process.standardInput = Pipe()
-        output.fileHandleForReading.readabilityHandler = { handle in
+        let input = Pipe()
+        process.standardInput = input
+        self.input = input
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
                 return
             }
-            if let pageURL = transcript.withLock({ $0.appendOutput(data) }) {
-                Task { @MainActor in onPageURL(pageURL) }
+            if let manualPage = transcript.withLock({ $0.appendOutput(data) }) {
+                Task { @MainActor [weak self] in
+                    await self?.deliverPage(manual: manualPage, to: onPage)
+                }
             }
         }
 
@@ -151,6 +189,26 @@ final class ClaudeSignIn {
         return (status, await errorText.value)
     }
 
+    /// Hands over the automatic page once the recorder has it, which is right
+    /// after the CLI prints the manual one. The manual page is the fallback.
+    private func deliverPage(manual: URL, to onPage: @MainActor @Sendable (SignInPage) -> Void) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now + Self.automaticPageWait
+        while clock.now < deadline, !self.isCancelled {
+            if let automatic = SignInHome.recordedPage() {
+                onPage(SignInPage(url: automatic, endsOnCode: false))
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return
+            }
+        }
+        guard !self.isCancelled else { return }
+        onPage(SignInPage(url: manual, endsOnCode: true))
+    }
+
     /// The CLI's own explanation from its error output, e.g. "Login failed: …".
     private static func reason(fromErrors errors: String, status: Int32) -> String {
         let firstLine = errors
@@ -163,13 +221,36 @@ final class ClaudeSignIn {
     }
 }
 
+/// Where the account signs in.
+struct SignInPage: Sendable, Equatable {
+    let url: URL
+    /// The page ends on a code to paste back instead of handing the sign-in
+    /// back to the CLI by itself.
+    let endsOnCode: Bool
+}
+
+/// What ClaudeBar does with the sign-in page when a sign-in starts.
+enum SignInLinkBehavior: String, Codable, CaseIterable, Sendable {
+    /// Opens it in the default browser.
+    case open
+    /// Copies its link, to open in whichever browser profile belongs to the account.
+    case copy
+
+    private static let defaultsKey = "signInLinkBehavior"
+
+    static var saved: SignInLinkBehavior {
+        get { Preferences.read(SignInLinkBehavior.self, key: Self.defaultsKey) ?? .open }
+        set { Preferences.write(newValue, key: Self.defaultsKey) }
+    }
+}
+
 /// What the CLI has printed so far.
 private struct Transcript: Sendable {
     private var output = ""
     private var hasReportedPage = false
 
-    /// Appends output, returning the sign-in page's address the first time a
-    /// whole line holds it.
+    /// Appends output, returning the manual sign-in page's address the first
+    /// time a whole line holds it.
     mutating func appendOutput(_ data: Data) -> URL? {
         self.output += String(decoding: data, as: UTF8.self)
         guard !self.hasReportedPage,
@@ -214,6 +295,30 @@ enum SignInHome {
         let digest = SHA256.hash(data: Data(self.path.utf8))
         let prefix = digest.map { String(format: "%02x", $0) }.joined().prefix(8)
         return "\(KeychainStore.liveService)-\(prefix)"
+    }
+
+    /// Stands in for the browser: the CLI runs it with the automatic sign-in
+    /// page, and it leaves the address in `recordedPageFile`.
+    static var browserRecorder: URL { self.url.appendingPathComponent("record-sign-in-page") }
+    private static var recordedPageFile: URL { self.url.appendingPathComponent("sign-in-page") }
+
+    /// Creates the home with the browser recorder in it.
+    static func prepare() throws {
+        try FileManager.default.createDirectory(at: self.url, withIntermediateDirectories: true)
+        let script = """
+            #!/bin/sh
+            printf '%s\\n' "$1" > "$(dirname "$0")/\(self.recordedPageFile.lastPathComponent)"
+
+            """
+        try Data(script.utf8).write(to: self.browserRecorder, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: self.browserRecorder.path)
+    }
+
+    /// The automatic sign-in page, once the CLI has handed it to the recorder.
+    static func recordedPage() -> URL? {
+        guard let data = FileManager.default.contents(atPath: self.recordedPageFile.path) else { return nil }
+        let address = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return address.isEmpty ? nil : URL(string: address)
     }
 
     static func collectCredentials() throws -> ClaudeSignIn.Credentials {

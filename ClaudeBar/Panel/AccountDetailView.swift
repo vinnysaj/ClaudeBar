@@ -50,12 +50,29 @@ struct AccountDetailView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Sign In") { self.actions.signIn(display.account.email) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .font(.system(size: 11))
-                    .disabled(self.model.signIn != nil)
+                if self.model.signIn?.accountId == display.id {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.6)
+                            .frame(width: 14, height: 14)
+                        Text("Signing in; finish on the sign-in page.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Button("Cancel", action: self.actions.cancelSignIn)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .font(.system(size: 11))
+                    }
                     .padding(.top, 2)
+                } else {
+                    Button("Sign In") { self.actions.signIn(display.id) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .font(.system(size: 11))
+                        .disabled(self.model.signIn != nil)
+                        .padding(.top, 2)
+                }
             } else if let usage = display.usage {
                 Text("Checked \(Formatting.timeAgo(from: usage.fetchedAt))")
                     .font(.system(size: 10))
