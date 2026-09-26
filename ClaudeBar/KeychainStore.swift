@@ -135,8 +135,22 @@ enum KeychainStore {
     // partition and neither side prompts.
 
     static func readLiveBlob() throws -> Data {
+        do {
+            return try self.readCLIItem(service: self.liveService)
+        } catch KeychainError.notFound {
+            let fileURL = self.credentialsFileURL
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                throw KeychainError.notFound
+            }
+            return try Data(contentsOf: fileURL)
+        }
+    }
+
+    /// A credential item the claude CLI keeps under `service`, read through
+    /// /usr/bin/security the way the CLI reads it.
+    static func readCLIItem(service: String) throws -> Data {
         let result = try Self.runSecurityTool(arguments: [
-            "find-generic-password", "-s", self.liveService, "-a", self.liveAccount, "-w",
+            "find-generic-password", "-s", service, "-a", self.liveAccount, "-w",
         ])
         switch result.status {
         case 0:
@@ -147,13 +161,20 @@ enum KeychainStore {
             }
             return data
         case 44: // security(1) exit code for "item not found"
-            let fileURL = self.credentialsFileURL
-            guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                throw KeychainError.notFound
-            }
-            return try Data(contentsOf: fileURL)
+            throw KeychainError.notFound
         default:
             throw KeychainError.accessDenied
+        }
+    }
+
+    /// Deletes a credential item the claude CLI keeps under `service`; one
+    /// that doesn't exist is already gone.
+    static func deleteCLIItem(service: String) throws {
+        let result = try Self.runSecurityTool(arguments: [
+            "delete-generic-password", "-s", service, "-a", self.liveAccount,
+        ])
+        guard result.status == 0 || result.status == 44 else {
+            throw KeychainError.unexpected(OSStatus(result.status))
         }
     }
 

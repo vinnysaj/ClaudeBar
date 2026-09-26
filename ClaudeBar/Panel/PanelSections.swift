@@ -51,7 +51,7 @@ struct PanelHeaderView: View {
                 BannerView(banner: banner)
             }
             if let snapshot = self.model.snapshot {
-                if snapshot.displays.isEmpty && !snapshot.isPendingAdd {
+                if snapshot.displays.isEmpty {
                     self.emptySection
                 }
             } else {
@@ -67,7 +67,7 @@ struct PanelHeaderView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No accounts yet")
                 .font(.system(size: 12, weight: .semibold))
-            Text("Sign into Claude Code (run claude and /login) and ClaudeBar will pick the account up automatically.")
+            Text("Add Account below signs you in without touching Claude Code's own login. Running claude and /login works too; ClaudeBar picks that account up automatically.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -89,15 +89,15 @@ struct PanelHeaderView: View {
     }
 }
 
-/// The pending-add hint and the app controls along the bottom.
+/// A sign-in in progress and the app controls along the bottom.
 struct PanelFooterView: View {
     let model: PanelModel
     let actions: PanelActions
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if self.model.snapshot?.isPendingAdd == true {
-                PendingAddRow(onCancel: self.actions.cancelAddAccount)
+            if let signIn = self.model.signIn {
+                SignInProgressRow(progress: signIn, onCancel: self.actions.cancelSignIn)
             }
             Divider().padding(.vertical, 6)
             self.controls
@@ -116,11 +116,11 @@ struct PanelFooterView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Add Account", action: self.actions.addAccount)
+                Button("Add Account") { self.actions.signIn(nil) }
                     .buttonStyle(.hoverBackground)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .disabled(self.model.snapshot?.isPendingAdd == true)
+                    .disabled(self.model.signIn != nil)
                 Button("Quit", action: self.actions.quit)
                     .buttonStyle(.hoverBackground)
                     .font(.system(size: 11))
@@ -164,8 +164,12 @@ struct BannerView: View {
     }
 }
 
-struct PendingAddRow: View {
+/// A sign-in running in the claude CLI: where to finish it, and a way out.
+struct SignInProgressRow: View {
+    let progress: SignInProgress
     let onCancel: () -> Void
+
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -174,16 +178,24 @@ struct PendingAddRow: View {
                 ProgressView()
                     .controlSize(.small)
                     .scaleEffect(0.6)
-                Text("Run claude and use /login to sign into the other account. ClaudeBar will detect it automatically.")
+                Text("Finish signing in to \(self.progress.email ?? "the account to add") in your browser. Claude Code's current login stays as it is.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Button("Cancel", action: self.onCancel)
-                .buttonStyle(.hoverBackground)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.leading, -HoverBackgroundButtonStyle.textInset)
+            HStack(spacing: 4) {
+                if let pageURL = self.progress.pageURL {
+                    Button("Open Sign-in Page") { self.openURL(pageURL) }
+                        .buttonStyle(.hoverBackground)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                Button("Cancel", action: self.onCancel)
+                    .buttonStyle(.hoverBackground)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, -HoverBackgroundButtonStyle.textInset)
         }
     }
 }

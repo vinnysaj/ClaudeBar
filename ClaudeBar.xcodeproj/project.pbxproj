@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		165537AEABCB033E829853EA /* ClaudeBarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */; };
+		EB1BDA4E1CFC85DD1D902C70 /* ClaudeSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DA1B31CE578071C2F1ADE1 /* ClaudeSignIn.swift */; };
 		2F2FFF2150570CB6E1DECCCB /* CostScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC9AD88B82AC5CEC3672AB5 /* CostScanner.swift */; };
 		4A1B2C3D4E5F60718293A4B5 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2C3D4E5F60718293A4B5C6 /* KeychainStore.swift */; };
 		558CD7D3D3E9368292E25611 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E389EF73BF226A5B46A7D42A /* Models.swift */; };
@@ -46,6 +47,7 @@
 		7D4E5F60718293A4B5C6D7E8 /* AnthropicAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicAPI.swift; sourceTree = "<group>"; };
 		9F60718293A4B5C6D7E8F90A /* AccountManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountManager.swift; sourceTree = "<group>"; };
 		B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBarApp.swift; sourceTree = "<group>"; };
+		D9DA1B31CE578071C2F1ADE1 /* ClaudeSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSignIn.swift; sourceTree = "<group>"; };
 		CC6F48A4AF790020100A205D /* ClaudeBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D2E3F405162738495A6B7C8D /* PricingTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingTable.swift; sourceTree = "<group>"; };
 		E389EF73BF226A5B46A7D42A /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -96,6 +98,7 @@
 				9F60718293A4B5C6D7E8F90A /* AccountManager.swift */,
 				7D4E5F60718293A4B5C6D7E8 /* AnthropicAPI.swift */,
 				B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */,
+				D9DA1B31CE578071C2F1ADE1 /* ClaudeSignIn.swift */,
 				1AC9AD88B82AC5CEC3672AB5 /* CostScanner.swift */,
 				70C6DCEB5BB23BA7D1AC95F4 /* Formatting.swift */,
 				285790D7C7E97AC740DBBF51 /* IconRenderer.swift */,
@@ -253,6 +256,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				165537AEABCB033E829853EA /* ClaudeBarApp.swift in Sources */,
+				EB1BDA4E1CFC85DD1D902C70 /* ClaudeSignIn.swift in Sources */,
 				2F2FFF2150570CB6E1DECCCB /* CostScanner.swift in Sources */,
 				DCD92DAF6BED1377B7DFD1BA /* Formatting.swift in Sources */,
 				AA35BC66FACAFAF684F426D9 /* IconRenderer.swift in Sources */,

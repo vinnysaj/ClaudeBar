@@ -293,7 +293,6 @@ struct Banner: Sendable, Equatable {
 struct AccountsSnapshot: Sendable {
     let displays: [AccountDisplay]
     let banner: Banner?
-    let isPendingAdd: Bool
     let cost: CostSnapshot?
     let updatedAt: Date?
     /// Whether the accounts together carry the expected work; nil until the

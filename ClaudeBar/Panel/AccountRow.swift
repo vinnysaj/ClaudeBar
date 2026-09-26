@@ -37,18 +37,25 @@ struct AccountRow: View {
                     showsSwitchingBadges: self.model.hasSeveralAccounts,
                     autoSwitchEnabled: self.model.usageSettings.autoSwitchEnabled)
                 Spacer()
-                if !display.isActive {
-                    if self.isHovering {
-                        Button {
-                            self.actions.removeAccount(display.id, display.account.email)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.hoverBackgroundIcon)
-                        .help("Remove account")
+                if !display.isActive && self.isHovering {
+                    Button {
+                        self.actions.removeAccount(display.id, display.account.email)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
                     }
+                    .buttonStyle(.hoverBackgroundIcon)
+                    .help("Remove account")
+                }
+                if display.account.needsRelogin {
+                    Button("Sign In") { self.actions.signIn(display.account.email) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .font(.system(size: 10))
+                        .disabled(self.model.signIn != nil)
+                        .help("Sign in without touching Claude Code's current login")
+                } else if !display.isActive {
                     Button("Switch") { self.actions.switchAccount(display.id) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -63,7 +70,7 @@ struct AccountRow: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(.orange)
-                        Text("Re-login required")
+                        Text("Signed out")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         Spacer()

@@ -15,7 +15,6 @@ actor AccountManager {
     private var errorBanner: Banner?
     private var infoBanner: Banner?
     private var infoBannerExpiresAt: Date?
-    private var pendingAddUntil: Date?
     private var clobberRepairsByUuid: [String: [Date]] = [:]
     private var isFetching = false
 
@@ -43,7 +42,6 @@ actor AccountManager {
     /// Rendered as stale (dimmed) when older than this; enough beyond the refresh
     /// interval that rows don't flicker stale right before a refetch.
     private var usageStaleDisplayInterval: TimeInterval { self.settings.refreshInterval + 5 * 60 }
-    private static let pendingAddDuration: TimeInterval = 10 * 60
     private static let expiryRefreshMargin: TimeInterval = 5 * 60
     private static let clobberWindow: TimeInterval = 10 * 60
     private static let clobberCap = 3
@@ -83,16 +81,10 @@ actor AccountManager {
         return AccountsSnapshot(
             displays: displays,
             banner: self.errorBanner ?? self.infoBanner,
-            isPendingAdd: self.isPendingAdd,
             cost: self.cache.cost,
             updatedAt: updatedAt,
             fleet: self.fleetForecast(displays, pace: pace, demand: demand, now: now),
             activity: pace.activity)
-    }
-
-    var isPendingAdd: Bool {
-        guard let until = self.pendingAddUntil else { return false }
-        return until > Date()
     }
 
     /// One row per account, in display order, with the "Next" badge on the
@@ -206,7 +198,7 @@ actor AccountManager {
         } catch KeychainError.notFound {
             self.errorBanner = Banner(
                 kind: .warning,
-                message: "No Claude Code login found. Run claude and /login first.")
+                message: "No Claude Code login found. Sign in with Add Account, or run claude and /login.")
             return
         } catch KeychainError.accessDenied, KeychainError.cancelled {
             self.errorBanner = Banner(
@@ -221,7 +213,7 @@ actor AccountManager {
         guard let liveTokens = Self.parseTokens(from: liveBlob) else {
             self.errorBanner = Banner(
                 kind: .warning,
-                message: "Claude Code credentials look empty. Run claude and /login.")
+                message: "Claude Code credentials look empty. Sign in with Add Account, or run claude and /login.")
             return
         }
 
@@ -258,7 +250,7 @@ actor AccountManager {
         } catch APIError.unauthorized, APIError.invalidGrant {
             self.errorBanner = Banner(
                 kind: .warning,
-                message: "Claude login expired. Run claude and /login to sign in again.")
+                message: "Claude Code's login expired. Sign in again with Add Account, or run claude and /login.")
             return
         } catch {
             // Network trouble — leave everything as-is and try again next tick.
@@ -339,7 +331,8 @@ actor AccountManager {
         self.logger.info("Repaired credential clobber by \(clobberEmail, privacy: .private) (\(repairs.count)/\(Self.clobberCap))")
     }
 
-    /// Implements both first-launch auto-capture and the guided Add Account flow.
+    /// Takes in a login Claude Code made itself that ClaudeBar hasn't seen: the
+    /// one it finds on first launch, or one from running claude and /login.
     private func captureNewAccount(uuid: String, profile: OAuthProfile, blob: Data) async {
         let email = profile.account?.email ?? "unknown@unknown"
         let account = Account(
@@ -354,7 +347,6 @@ actor AccountManager {
         self.storeRosterBlob(blob, for: uuid)
         self.state.accounts.append(account)
         self.state.activeAccountUuid = uuid
-        self.pendingAddUntil = nil
         self.errorBanner = nil
         self.saveState()
         self.logger.info("Captured account \(email, privacy: .private)")
@@ -393,6 +385,10 @@ actor AccountManager {
         if self.state.activeAccountUuid == target { return true }
         let email = self.state.accounts[index].email
         let previousEmail = self.state.accounts.first(where: { $0.id == self.state.activeAccountUuid })?.email
+        guard !self.state.accounts[index].needsRelogin else {
+            self.errorBanner = Banner(kind: .warning, message: "\(email) is signed out. Use Sign In on its row first.")
+            return false
+        }
 
         var blob: Data
         do {
@@ -401,7 +397,7 @@ actor AccountManager {
             self.setNeedsRelogin(true, for: target)
             self.errorBanner = Banner(
                 kind: .warning,
-                message: "No stored credentials for \(email). Run claude and /login to reconnect this account.")
+                message: "No stored credentials for \(email). Use Sign In on its row to reconnect it.")
             return false
         } catch {
             self.errorBanner = Banner(kind: .error, message: "Credential read for \(email) failed: \(error)")
@@ -413,12 +409,9 @@ actor AccountManager {
         }
 
         // Refresh ahead of the swap when the token is about to expire, so the CLI
-        // starts with a working token. A needsRelogin account skips this: writing
-        // its stale blob is intentional — the CLI will prompt /login and reconcile
-        // harvests the result.
-        let needsRelogin = self.state.accounts[index].needsRelogin
+        // starts with a working token.
         let expiringSoon = tokens.expiresAt.map { $0 < Date().addingTimeInterval(Self.expiryRefreshMargin) } ?? false
-        if expiringSoon && !needsRelogin {
+        if expiringSoon {
             if let refreshToken = tokens.refreshToken {
                 do {
                     let refreshed = try await AnthropicAPI.refresh(refreshToken: refreshToken)
@@ -437,7 +430,7 @@ actor AccountManager {
                     self.saveState()
                     self.errorBanner = Banner(
                         kind: .warning,
-                        message: "\(email) needs a re-login. Switch again, then run claude and /login.")
+                        message: "\(email) is signed out. Use Sign In on its row to sign it back in.")
                     return false
                 } catch {
                     self.errorBanner = Banner(kind: .error, message: "Token refresh for \(email) failed: \(error)")
@@ -477,14 +470,86 @@ actor AccountManager {
         return true
     }
 
-    // MARK: - Add / Remove
+    // MARK: - Sign In / Remove
 
-    func beginAddAccount() {
-        self.pendingAddUntil = Date().addingTimeInterval(Self.pendingAddDuration)
+    /// Takes in an account signed into through `ClaudeSignIn`, beside the live
+    /// login rather than in it. The live login moves only when it has to: for
+    /// the active account's own sign-in, whose running sessions need the new
+    /// tokens, or when there is no active account to disturb.
+    func adoptSignIn(_ credentials: ClaudeSignIn.Credentials) async {
+        guard let tokens = Self.parseTokens(from: credentials.blob) else {
+            self.reportSignInProblem("The sign-in finished, but its credentials were empty.")
+            return
+        }
+        let profile: OAuthProfile
+        do {
+            profile = try await AnthropicAPI.fetchProfile(accessToken: tokens.accessToken)
+        } catch {
+            self.reportSignInProblem("Signed in, but ClaudeBar couldn't look the account up: \(error)")
+            return
+        }
+        guard let uuid = profile.account?.uuid else {
+            self.reportSignInProblem("Signed in, but the account's profile had no id.")
+            return
+        }
+        do {
+            _ = try self.loadRosterBlobs()
+        } catch {
+            return // loadRosterBlobs has put up a banner saying why.
+        }
+
+        let email = profile.account?.email ?? "unknown@unknown"
+        let oauthAccountRaw = credentials.claudeJson.flatMap { Self.oauthAccountRaw(inClaudeJson: $0, matching: uuid) }
+        self.storeRosterBlob(credentials.blob, for: uuid)
+        if let index = self.state.accounts.firstIndex(where: { $0.id == uuid }) {
+            self.state.accounts[index].needsRelogin = false
+            self.state.accounts[index].email = email
+            if let oauthAccountRaw {
+                self.state.accounts[index].oauthAccountRaw = oauthAccountRaw
+            }
+        } else {
+            self.state.accounts.append(Account(
+                id: uuid,
+                email: email,
+                organizationName: profile.organization?.name,
+                oauthAccountRaw: oauthAccountRaw,
+                displayOrder: (self.state.accounts.map(\.displayOrder).max() ?? -1) + 1,
+                needsRelogin: false,
+                preferences: .default))
+        }
+
+        let hasActiveAccount = self.state.accounts.contains { $0.id == self.state.activeAccountUuid }
+        let takesLiveLogin = uuid == self.state.activeAccountUuid || !hasActiveAccount
+        if takesLiveLogin {
+            do {
+                try self.writeLiveBlobTracked(credentials.blob)
+            } catch {
+                self.saveState()
+                self.errorBanner = Banner(kind: .error, message: "Signed in to \(email), but the keychain write failed: \(error)")
+                return
+            }
+            self.patchClaudeJson(oauthAccountRaw: oauthAccountRaw)
+            self.state.activeAccountUuid = uuid
+            self.clobberRepairsByUuid = [:]
+        }
+        self.errorBanner = nil
+        self.infoBanner = Banner(
+            kind: .info,
+            message: takesLiveLogin ? "Signed in to \(email)." : "Signed in to \(email). Switch to it whenever you like.")
+        self.infoBannerExpiresAt = Date().addingTimeInterval(2 * 60)
+        self.saveState()
+        self.logger.info("Signed in to \(email, privacy: .private)")
+
+        if let account = self.state.accounts.first(where: { $0.id == uuid }) {
+            await self.fetchUsage(for: account, isActive: takesLiveLogin)
+            self.saveUsage()
+        }
     }
 
-    func cancelAddAccount() {
-        self.pendingAddUntil = nil
+    /// Shows why a sign-in didn't go through.
+    func reportSignInProblem(_ message: String) {
+        self.infoBanner = Banner(kind: .error, message: message)
+        self.infoBannerExpiresAt = Date().addingTimeInterval(5 * 60)
     }
 
     /// Refuses to remove the active account. Returns false when refused.
@@ -524,7 +589,7 @@ actor AccountManager {
     /// Moves the live login off an account that is at, or racing toward, its
     /// limits. Runs after every usage refresh; the planner decides.
     func autoSwitchIfNeeded() async {
-        guard self.settings.autoSwitchEnabled, !self.isPendingAdd else { return }
+        guard self.settings.autoSwitchEnabled else { return }
         var decision = self.switchDecision(now: Date())
 
         // The chosen account's cached figures can be minutes old, and claude.ai or
@@ -657,7 +722,7 @@ actor AccountManager {
                 ? try self.readLiveBlobCached()
                 : try self.readRosterBlob(for: account.id)
         } catch KeychainError.notFound where !isActive {
-            // The roster blob is gone; only a fresh /login can bring it back.
+            // The roster blob is gone; only a fresh sign-in can bring it back.
             // A missing live item is reconcile's problem, not this account's.
             self.logger.error("No roster credentials for \(account.email, privacy: .private); marking for re-login")
             self.setNeedsRelogin(true, for: account.id)
@@ -937,8 +1002,14 @@ actor AccountManager {
     /// The `oauthAccount` object from ~/.claude.json, verbatim, if it belongs to
     /// the given account.
     private static func readOauthAccountRaw(matching uuid: String) -> Data? {
-        guard let data = try? Data(contentsOf: self.claudeJsonURL),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let data = try? Data(contentsOf: self.claudeJsonURL) else { return nil }
+        return self.oauthAccountRaw(inClaudeJson: data, matching: uuid)
+    }
+
+    /// The `oauthAccount` object from a .claude.json's contents, verbatim, if it
+    /// belongs to the given account.
+    private static func oauthAccountRaw(inClaudeJson data: Data, matching uuid: String) -> Data? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauthAccount = root["oauthAccount"] as? [String: Any],
               oauthAccount["accountUuid"] as? String == uuid
         else { return nil }

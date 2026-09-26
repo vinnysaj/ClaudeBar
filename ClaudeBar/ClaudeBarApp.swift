@@ -22,6 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         self.statusItemController = StatusItemController(onCheckForUpdates: onCheckForUpdates)
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // The claude process a sign-in runs in would outlive the app.
+        self.statusItemController?.cancelSignIn()
+    }
 }
 
 @main

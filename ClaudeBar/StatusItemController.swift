@@ -7,7 +7,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private var refreshTask: Task<Void, Never>?
-    private var pendingAddTask: Task<Void, Never>?
+    private var signIn: ClaudeSignIn?
     private var lastCostScanAt: Date?
     private let onCheckForUpdates: (() -> Void)?
     private let hotKeys = HotKeyManager()
@@ -52,8 +52,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         toggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
         refresh: { [weak self] in Task { await self?.fetchAndUpdate(force: true) } },
         switchAccount: { [weak self] accountUuid in Task { await self?.switchTo(accountUuid) } },
-        addAccount: { [weak self] in Task { await self?.beginAddAccount() } },
-        cancelAddAccount: { [weak self] in Task { await self?.cancelAddAccount() } },
+        signIn: { [weak self] email in self?.startSignIn(email: email) },
+        cancelSignIn: { [weak self] in self?.cancelSignIn() },
         removeAccount: { [weak self] accountUuid, email in
             Task { await self?.confirmAndRemove(accountUuid: accountUuid, email: email) }
         },
@@ -158,6 +158,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Instant render from the persisted cache before any network round-trip.
     private func bootstrap() async {
         await self.refreshSnapshot()
+        // A sign-in cut short by quitting leaves its home behind, and possibly credentials.
+        await Task.detached { SignInHome.removeLeftovers() }.value
     }
 
     private func fetchAndUpdate(force: Bool) async {
@@ -182,9 +184,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.model.snapshot = await AccountManager.shared.snapshot()
         self.applyIcon()
         self.rebuildMenuIfNeeded()
-        if self.model.snapshot?.isPendingAdd == true {
-            self.startPendingAddLoop()
-        }
     }
 
     private func runCostScan() async {
@@ -236,32 +235,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         await self.refreshSnapshot()
     }
 
-    private func beginAddAccount() async {
-        await AccountManager.shared.beginAddAccount()
-        await self.refreshSnapshot()
-    }
-
-    private func cancelAddAccount() async {
-        await AccountManager.shared.cancelAddAccount()
-        self.pendingAddTask?.cancel()
-        self.pendingAddTask = nil
-        await self.refreshSnapshot()
-    }
-
-    /// While an add is pending, reconcile every 5s so the new login is detected
-    /// moments after the user finishes /login.
-    private func startPendingAddLoop() {
-        guard self.pendingAddTask == nil else { return }
-        self.pendingAddTask = Task { [weak self] in
-            defer { Task { @MainActor [weak self] in self?.pendingAddTask = nil } }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                guard let self else { return }
-                await AccountManager.shared.reconcile()
-                await self.refreshSnapshot()
-                if self.model.snapshot?.isPendingAdd != true { return }
+    /// Signs into an account in the claude CLI beside the live login, so running
+    /// sessions carry on untouched, then takes the account in.
+    private func startSignIn(email: String?) {
+        guard self.signIn == nil else { return }
+        let signIn = ClaudeSignIn()
+        self.signIn = signIn
+        self.model.signIn = SignInProgress(email: email, pageURL: nil)
+        Task { [weak self] in
+            do {
+                let credentials = try await signIn.run(email: email) { [weak self] pageURL in
+                    self?.model.signIn?.pageURL = pageURL
+                }
+                await AccountManager.shared.adoptSignIn(credentials)
+            } catch is CancellationError {
+                // Cancelled from the panel or by quitting; nothing went wrong.
+            } catch {
+                await AccountManager.shared.reportSignInProblem(String(describing: error))
             }
+            self?.signIn = nil
+            self?.model.signIn = nil
+            await self?.refreshSnapshot()
         }
+    }
+
+    /// Stops a sign-in in progress, closing the claude process running it.
+    func cancelSignIn() {
+        self.signIn?.cancel()
     }
 
     private func confirmAndRemove(accountUuid: String, email: String) async {

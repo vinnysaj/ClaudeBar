@@ -46,10 +46,16 @@ struct AccountDetailView: View {
                     .lineLimit(1)
             }
             if display.account.needsRelogin {
-                Label("Needs a fresh login: switch to it, then run claude and /login.", systemImage: "exclamationmark.triangle.fill")
+                Label("Signed out. Signing in again leaves Claude Code's current login as it is.", systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                Button("Sign In") { self.actions.signIn(display.account.email) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .font(.system(size: 11))
+                    .disabled(self.model.signIn != nil)
+                    .padding(.top, 2)
             } else if let usage = display.usage {
                 Text("Checked \(Formatting.timeAgo(from: usage.fetchedAt))")
                     .font(.system(size: 10))
