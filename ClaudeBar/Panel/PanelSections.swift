@@ -187,15 +187,20 @@ struct SignInProgressRow: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 4) {
-                if let page = self.progress.page {
-                    Button("Open Page", action: self.actions.openSignInPage)
-                    Button(self.progress.isLinkCopied ? "Copy Again" : "Copy Link", action: self.actions.copySignInLink)
-                    if page.endsOnCode {
-                        Button("Paste Code", action: self.actions.pasteSignInCode)
+            VStack(alignment: .leading, spacing: 0) {
+                if self.progress.page != nil {
+                    HStack(spacing: 4) {
+                        Button("Open Page", action: self.actions.openSignInPage)
+                        Button(self.progress.isLinkCopied ? "Copy Again" : "Copy Link", action: self.actions.copySignInLink)
                     }
                 }
-                Button("Cancel", action: self.actions.cancelSignIn)
+                HStack(spacing: 4) {
+                    // Either page can end on a code, and the CLI takes one for as long as it waits.
+                    if self.progress.page != nil {
+                        Button("Paste Code from Clipboard", action: self.actions.pasteSignInCode)
+                    }
+                    Button("Cancel", action: self.actions.cancelSignIn)
+                }
             }
             .buttonStyle(.hoverBackground)
             .font(.system(size: 11, weight: .medium))
@@ -210,12 +215,13 @@ struct SignInProgressRow: View {
             return "Starting the sign-in to \(account)..."
         }
         if page.endsOnCode {
-            return "Sign in to \(account), copy the code the page ends on, then click Paste Code."
+            return "Sign in to \(account), copy the code the page ends on, then click Paste Code from Clipboard."
         }
+        let codeHint = "If the page ends on a code instead, copy it and click Paste Code from Clipboard."
         if self.progress.isLinkCopied {
-            return "Sign-in link copied. Paste it into any browser on this Mac and sign in to \(account); ClaudeBar takes it from there."
+            return "Sign-in link copied. Paste it into any browser on this Mac and sign in to \(account); ClaudeBar takes it from there. \(codeHint)"
         }
-        return "Sign in to \(account) in your browser; ClaudeBar takes it from there."
+        return "Sign in to \(account) in your browser; ClaudeBar takes it from there. \(codeHint)"
     }
 }
 

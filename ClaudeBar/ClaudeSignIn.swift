@@ -73,9 +73,10 @@ final class ClaudeSignIn {
         self.process?.terminate()
     }
 
-    /// Hands the CLI the code a manual sign-in page ends on, which it takes as
-    /// `code#state`. `text` is checked for that shape first: the CLI answers
-    /// anything else by waiting for another try.
+    /// Hands the CLI the code a sign-in page ends on, which it takes as
+    /// `code#state` for as long as it waits, whichever page is in use. `text`
+    /// is checked for that shape first: the CLI answers anything else by
+    /// waiting for another try.
     func submitCode(_ text: String) throws {
         let code = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = code.split(separator: "#", omittingEmptySubsequences: false)
@@ -224,8 +225,8 @@ final class ClaudeSignIn {
 /// Where the account signs in.
 struct SignInPage: Sendable, Equatable {
     let url: URL
-    /// The page ends on a code to paste back instead of handing the sign-in
-    /// back to the CLI by itself.
+    /// The page ends on a code to paste back. The other one usually hands the
+    /// sign-in back to the CLI by itself, but can end on a code too.
     let endsOnCode: Bool
 }
 
