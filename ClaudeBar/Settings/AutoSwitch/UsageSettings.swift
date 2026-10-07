@@ -22,8 +22,8 @@ struct UsageSettings: Sendable, Codable, Equatable {
         workSchedule: .default)
 
     static let refreshIntervalChoices: [TimeInterval] = [60, 2 * 60, 5 * 60, 10 * 60, 15 * 60]
-    static let switchPercentChoices = [70, 75, 80, 85, 90, 95]
-    static let weeklyPercentChoices = [70, 75, 80, 85, 90, 95, 100]
+    static let switchPercentChoices = [70, 75, 80, 85, 90, 95, 98]
+    static let weeklyPercentChoices = [70, 75, 80, 85, 90, 95, 98, 100]
 
     /// The limits an account is held to: its own where it sets them, these defaults otherwise.
     func limits(for preferences: AccountPreferences) -> AccountLimits {
