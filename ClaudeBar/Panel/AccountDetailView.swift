@@ -249,20 +249,16 @@ private struct LimitStepper: View {
     let onChange: (Int?) -> Void
 
     var body: some View {
+        let percent = self.value ?? self.defaultValue
         HStack(spacing: 8) {
             Text(self.title)
                 .foregroundStyle(.secondary)
                 .frame(width: 58, alignment: .leading)
             Stepper(
-                value: Binding(
-                    get: { self.value ?? self.defaultValue },
-                    // Landing back on the default follows it again, so a later
-                    // change to the default carries through.
-                    set: { self.onChange($0 == self.defaultValue ? nil : $0) }),
-                in: AccountPreferences.limitRange,
-                step: AccountPreferences.limitStep)
+                onIncrement: self.step(from: percent, up: true),
+                onDecrement: self.step(from: percent, up: false))
             {
-                Text("\(self.value ?? self.defaultValue)%")
+                Text("\(percent)%")
                     .monospacedDigit()
                     .frame(width: 36, alignment: .trailing)
             }
@@ -277,6 +273,14 @@ private struct LimitStepper: View {
             Spacer(minLength: 0)
         }
         .font(.system(size: 11))
+    }
+
+    /// Nil past either end of the choices, which disables that arrow.
+    private func step(from percent: Int, up: Bool) -> (() -> Void)? {
+        guard let next = AccountLimits.choice(steppingFrom: percent, up: up) else { return nil }
+        // Landing back on the default follows it again, so a later
+        // change to the default carries through.
+        return { self.onChange(next == self.defaultValue ? nil : next) }
     }
 }
 

@@ -70,3 +70,13 @@ struct WindowResetSinceFetchTests {
         #expect(!usage.hasWindowResetSinceFetch(now: now))
     }
 }
+
+@Suite("Limit steps")
+struct LimitStepTests {
+    @Test(
+        "A limit saved between choices steps to the nearest choice either way",
+        arguments: [(93, true, 95), (93, false, 90)])
+    func offScaleLimitStepsOntoTheScale(percent: Int, up: Bool, expected: Int) {
+        #expect(AccountLimits.choice(steppingFrom: percent, up: up) == expected)
+    }
+}

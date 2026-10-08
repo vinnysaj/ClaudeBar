@@ -145,8 +145,6 @@ struct AccountPreferences: Sendable, Codable, Equatable {
     var allowsAutoSwitch: Bool
 
     static let `default` = AccountPreferences(sessionLimit: nil, weeklyLimit: nil, allowsAutoSwitch: true)
-    static let limitRange = 10...100
-    static let limitStep = 5
 }
 
 /// The usage, in percent, an account takes work up to. Auto-switching moves the
@@ -154,6 +152,15 @@ struct AccountPreferences: Sendable, Codable, Equatable {
 struct AccountLimits: Sendable, Equatable {
     let session: Int
     let weekly: Int
+
+    /// Every percent a limit can be set to: steps of 5, then each point from 95 to 100.
+    static let choices = Array(stride(from: 10, to: 95, by: 5)) + Array(95...100)
+
+    /// The choice one step above or below `percent`, or nil past either end. A percent
+    /// between choices, which older builds could save, steps to the nearest one that way.
+    static func choice(steppingFrom percent: Int, up: Bool) -> Int? {
+        up ? Self.choices.first { $0 > percent } : Self.choices.last { $0 < percent }
+    }
 
     func percent(_ window: UsageWindow) -> Int {
         switch window {
