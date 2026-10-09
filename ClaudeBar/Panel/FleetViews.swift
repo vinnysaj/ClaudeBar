@@ -14,6 +14,8 @@ struct FleetStatus {
     let level: Level
     let headline: String
     let detail: String
+    /// The expected work no account has room for, when the forecast runs short.
+    let overBudget: String?
 
     /// A forecast running out sooner than this is already here.
     private static let alreadyOut: TimeInterval = 15 * 60
@@ -24,12 +26,14 @@ struct FleetStatus {
             self.level = .learning
             self.headline = "Learning your pace"
             self.detail = "needs about an hour of work"
+            self.overBudget = nil
             return
         }
         guard let runsOutAt = fleet.runsOutAt else {
             self.level = .covered
             self.headline = "On pace for the week"
             self.detail = "\(Formatting.workHours(fleet.bankedHours)) banked"
+            self.overBudget = nil
             return
         }
         let remaining = runsOutAt.timeIntervalSince(now)
@@ -38,6 +42,7 @@ struct FleetStatus {
             ? "Every account is at its limits"
             : "Runs out ~\(Formatting.approximateMoment(runsOutAt, now: now))"
         self.detail = fleet.resumesAt.map { "back \(Formatting.approximateMoment($0, now: now))" } ?? ""
+        self.overBudget = "\(Formatting.workHours(fleet.shortfallHours)) over budget in the next 7 days"
     }
 
     var color: Color {
@@ -50,24 +55,37 @@ struct FleetStatus {
     }
 }
 
-/// The fleet forecast in one line: a dot colored by how it reads, the verdict, and a detail.
+/// The fleet forecast at a glance: a dot colored by how it reads, the verdict, and
+/// a detail, then how far over budget the week runs when it runs short.
 struct FleetStatusLine: View {
     let fleet: FleetForecast?
 
+    private static let dotSize: CGFloat = 7
+    private static let dotSpacing: CGFloat = 7
+
     var body: some View {
         let status = FleetStatus(fleet: self.fleet, now: Date())
-        HStack(spacing: 7) {
-            Circle()
-                .fill(status.color)
-                .frame(width: 7, height: 7)
-            Text(status.headline)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            Text(status.detail)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Self.dotSpacing) {
+                Circle()
+                    .fill(status.color)
+                    .frame(width: Self.dotSize, height: Self.dotSize)
+                Text(status.headline)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(status.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if let overBudget = status.overBudget {
+                Text(overBudget)
+                    .font(.system(size: 11))
+                    .foregroundStyle(status.color)
+                    .lineLimit(1)
+                    .padding(.leading, Self.dotSize + Self.dotSpacing)
+            }
         }
     }
 }
@@ -114,7 +132,7 @@ struct FleetPaceSection: View {
         if let resumesAt = fleet.resumesAt {
             sentences.append("Room comes back ~\(Formatting.approximateMoment(resumesAt, now: now)).")
         }
-        sentences.append("Over the next 7 days you'd be about \(Formatting.workHours(fleet.shortfallHours)) of work short of the \(expected) expected.")
+        sentences.append("Of the \(expected) of work expected over the next 7 days, about \(Formatting.workHours(fleet.shortfallHours)) is over budget.")
         return sentences.joined(separator: " ")
     }
 
