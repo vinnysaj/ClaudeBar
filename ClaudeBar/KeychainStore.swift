@@ -38,7 +38,10 @@ enum KeychainStore {
     /// Protection keychain, where access is granted by code-signing
     /// entitlements (team + access group) instead of per-binary ACLs and
     /// partition lists — no permission dialogs, ever, and access survives app
-    /// updates. Bare `swift build` binaries cannot carry the required
+    /// updates. It stays writable while the Mac is locked: ClaudeBar refreshes
+    /// tokens in the background, each refresh retires the previous refresh
+    /// token, and one that can't be saved is gone at the next launch, signing
+    /// the account out. Bare `swift build` binaries cannot carry the required
     /// entitlement (that needs a provisioning profile), so they transparently
     /// fall back to a file-based login keychain item.
     static let rosterService = "ClaudeBar-accounts"
@@ -110,13 +113,17 @@ enum KeychainStore {
     /// live Claude Code item must go through `writeLiveBlob` instead.
     private static func write(service: String, account: String, data: Data, dataProtection: Bool) throws {
         let query = self.query(service: service, account: account, dataProtection: dataProtection)
-        let update: [CFString: Any] = [kSecValueData: data]
-        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        var attributes: [CFString: Any] = [kSecValueData: data]
+        if dataProtection {
+            // On update as well as add: an existing item keeps whatever
+            // accessibility it was stored with until a write changes it.
+            attributes[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+        }
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecSuccess { return }
         guard status == errSecItemNotFound else { throw KeychainError.from(status) }
 
-        var add = query
-        add[kSecValueData] = data
+        let add = query.merging(attributes) { _, new in new }
         let addStatus = SecItemAdd(add as CFDictionary, nil)
         guard addStatus == errSecSuccess else { throw KeychainError.from(addStatus) }
     }

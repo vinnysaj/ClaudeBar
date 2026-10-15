@@ -25,6 +25,10 @@ actor AccountManager {
     private var liveBlobCache: (blob: Data, readAt: Date)?
     private var rosterBlobs: [String: Data]?
     private var rosterLoadError: KeychainError?
+    /// Set while the roster's last keychain write has failed. A refresh retires
+    /// the previous refresh token, so until a write lands `rosterBlobs` holds
+    /// the only working copy, and quitting signs those accounts out.
+    private var rosterWriteError: Error?
     private static let liveBlobCacheTTL: TimeInterval = 5
 
     /// Usage is refetched per account at most every `settings.refreshInterval`
@@ -78,9 +82,15 @@ actor AccountManager {
             displays[index].insight = self.insight(for: displays[index], pace: pace, demand: demand, now: now)
         }
 
+        let rosterWriteBanner = self.rosterWriteError.map {
+            Banner(
+                kind: .error,
+                message: "ClaudeBar can't save refreshed logins to the keychain (\($0)). Leave it running to retry: quitting now signs those accounts out.")
+        }
+
         return AccountsSnapshot(
             displays: displays,
-            banner: self.errorBanner ?? self.infoBanner,
+            banner: rosterWriteBanner ?? self.errorBanner ?? self.infoBanner,
             cost: self.cache.cost,
             updatedAt: updatedAt,
             fleet: self.fleetForecast(displays, pace: pace, demand: demand, now: now),
@@ -425,7 +435,7 @@ actor AccountManager {
                     self.storeRosterBlob(newBlob, for: target)
                     blob = newBlob
                     tokens = newTokens
-                } catch APIError.invalidGrant, APIError.unauthorized {
+                } catch APIError.invalidGrant {
                     self.state.accounts[index].needsRelogin = true
                     self.saveState()
                     self.errorBanner = Banner(
@@ -647,6 +657,7 @@ actor AccountManager {
         self.isFetching = true
         defer { self.isFetching = false }
 
+        self.retryRosterWriteIfNeeded()
         let now = Date()
         let ordered = self.state.accounts.sorted {
             let lhsActive = $0.id == self.state.activeAccountUuid
@@ -748,11 +759,11 @@ actor AccountManager {
         } catch APIError.unauthorized {
             switch await self.refreshTokens(blob: &blob, tokens: &tokens, for: account, isActive: isActive) {
             case .refreshed:
+                // A just-issued token turned away doesn't sign the account out:
+                // the refresh token it came with still works next cycle.
                 do {
                     let raw = try await AnthropicAPI.fetchUsage(accessToken: tokens.accessToken)
                     self.storeUsage(raw, for: account)
-                } catch APIError.unauthorized {
-                    self.setNeedsRelogin(true, for: account.id)
                 } catch {
                     self.logger.info("Usage retry for \(account.email, privacy: .private) failed: \(String(describing: error), privacy: .public)")
                 }
@@ -773,6 +784,10 @@ actor AccountManager {
         case transientFailure
     }
 
+    /// Signs the account out only when there is no refresh token or the token
+    /// endpoint refuses it with invalid_grant. A bare 401 or 403 can come from
+    /// a proxy or bot check in front of the endpoint, so like a network failure
+    /// it waits for the next cycle.
     private func refreshTokens(
         blob: inout Data, tokens: inout OAuthTokens,
         for account: Account, isActive: Bool) async -> RefreshOutcome
@@ -799,7 +814,7 @@ actor AccountManager {
             blob = newBlob
             tokens = newTokens
             return .refreshed
-        } catch APIError.invalidGrant, APIError.unauthorized {
+        } catch APIError.invalidGrant {
             self.setNeedsRelogin(true, for: account.id)
             return .needsRelogin
         } catch {
@@ -980,9 +995,16 @@ actor AccountManager {
         do {
             let data = try JSONEncoder().encode(blobs)
             try KeychainStore.writeRoster(data)
+            self.rosterWriteError = nil
         } catch {
+            self.rosterWriteError = error
             self.logger.error("Roster keychain write failed: \(String(describing: error), privacy: .public)")
         }
+    }
+
+    private func retryRosterWriteIfNeeded() {
+        guard self.rosterWriteError != nil, let blobs = self.rosterBlobs else { return }
+        self.persistRosterBlobs(blobs)
     }
 
     private func setNeedsRelogin(_ value: Bool, for uuid: String) {
