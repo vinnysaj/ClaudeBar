@@ -32,7 +32,7 @@ ClaudeBar runs as a background service that does the polling and switching, with
 ```sh
 mkdir -p ~/.local/bin
 curl -L https://github.com/vinnysaj/ClaudeBar/releases/latest/download/claudebar-linux-$(uname -m).tar.gz | tar -xz -C ~/.local/bin
-claudebar service install
+~/.local/bin/claudebar service install
 ```
 
 `service install` starts the service under systemd and keeps it starting at login. On a server, `sudo loginctl enable-linger $USER` keeps it running while you're logged out. On a desktop it also starts the menu-bar icon, which needs Ubuntu 24.04 or later (or another distribution with glibc 2.38) and `sudo apt install libayatana-appindicator3-1 libcurl4t64`. `claudebar` itself is a static binary and runs anywhere.
