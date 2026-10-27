@@ -27,11 +27,27 @@ enum Terminal {
 
     /// Lines typed on standard input, read on a thread of their own so waiting
     /// for one blocks nothing else.
+    ///
+    /// The thread reads the file descriptor, not stdio's stdin: a thread waiting
+    /// in `readLine` holds stdin's lock, and musl's `exit` takes every stream's
+    /// lock, so the static Linux build would never exit while one waited.
     static func inputLines() -> AsyncStream<String> {
         AsyncStream { continuation in
             Thread {
-                while let line = readLine() {
-                    continuation.yield(line)
+                var pending: [UInt8] = []
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while true {
+                    let count = read(STDIN_FILENO, &buffer, buffer.count)
+                    if count < 0, errno == EINTR { continue }
+                    guard count > 0 else { break }
+                    pending += buffer[..<count]
+                    while let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
+                        continuation.yield(String(decoding: pending[..<newline], as: UTF8.self))
+                        pending.removeSubrange(...newline)
+                    }
+                }
+                if !pending.isEmpty {
+                    continuation.yield(String(decoding: pending, as: UTF8.self))
                 }
                 continuation.finish()
             }.start()

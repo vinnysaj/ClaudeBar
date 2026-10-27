@@ -32,7 +32,7 @@ struct LoginCommand: AsyncParsableCommand {
                     // Whatever is typed is taken as a code; claude waits for one
                     // for as long as the sign-in runs.
                     for await line in Terminal.inputLines() {
-                        let code = line.trimmingCharacters(in: .whitespaces)
+                        let code = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !code.isEmpty else { continue }
                         try await connection.send(.signInCode(code))
                     }
