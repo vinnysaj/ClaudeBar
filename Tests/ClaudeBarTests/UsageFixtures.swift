@@ -1,5 +1,5 @@
 import Foundation
-@testable import ClaudeBar
+@testable import ClaudeBarCore
 
 /// Deterministic building blocks for the usage tests. Every instant is derived
 /// from `UsageFixture.now`, so nothing here depends on the wall clock.

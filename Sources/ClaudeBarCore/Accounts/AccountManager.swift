@@ -1,0 +1,1136 @@
+import Foundation
+#if canImport(os)
+import os
+#endif
+
+/// Owns the account roster, per-account usage cache, and the live Claude Code
+/// credential item. All keychain blobs are treated as opaque `Data`: only the
+/// token fields inside `claudeAiOauth` are ever mutated, so unknown fields
+/// (e.g. `mcpOAuth`) survive round-trips.
+actor AccountManager {
+    static let shared = AccountManager()
+
+    private let logger = Logger(subsystem: "net.vinnysaj.ClaudeBar", category: "accounts")
+
+    private var state: AccountsState
+    private var cache: UsageCacheFile
+    private var errorBanner: Banner?
+    private var infoBanner: Banner?
+    private var infoBannerExpiresAt: Date?
+    private var clobberRepairsByUuid: [String: [Date]] = [:]
+    private var isFetching = false
+
+    /// Keychain read caches. Every SecItem read can trigger a user-facing
+    /// permission prompt, so a refresh cycle must hit each item at most once.
+    /// The roster item is only ever written by ClaudeBar, so its cache never
+    /// expires; the live item is shared with the claude CLI and gets a short TTL.
+    private var liveBlobCache: (blob: Data, readAt: Date)?
+    private var rosterBlobs: [String: Data]?
+    private var rosterLoadError: CredentialError?
+    /// Set while the roster's last keychain write has failed. A refresh retires
+    /// the previous refresh token, so until a write lands `rosterBlobs` holds
+    /// the only working copy, and quitting signs those accounts out.
+    private var rosterWriteError: Error?
+    private static let liveBlobCacheTTL: TimeInterval = 5
+
+    /// Usage is refetched per account at most every `settings.refreshInterval`
+    /// — including across restarts, since fetch times persist with the cache.
+    private var settings: UsageSettings
+    private var lastManualSwitchAt: Date?
+    /// Every reading fetched, for pace and forecasts. Rewritten whole on save, so
+    /// saves are spaced out; quitting between two loses at most that much.
+    private var history: UsageHistory
+    private var historySavedAt: Date?
+    private static let historySaveInterval: TimeInterval = 10 * 60
+    /// Learned from `history`; cleared whenever the history or the work schedule
+    /// changes and relearned on next use.
+    private var paceModel: PaceModel?
+    /// Rendered as stale (dimmed) when older than this; enough beyond the refresh
+    /// interval that rows don't flicker stale right before a refetch.
+    private var usageStaleDisplayInterval: TimeInterval { self.settings.refreshInterval + 5 * 60 }
+    private static let expiryRefreshMargin: TimeInterval = 5 * 60
+    private static let clobberWindow: TimeInterval = 10 * 60
+    private static let clobberCap = 3
+
+    init() {
+        self.state = Self.loadState()
+        self.cache = Self.loadCache()
+        self.settings = UsageSettings.saved
+        self.history = UsageHistory.load()
+    }
+
+    // MARK: - Snapshot for UI
+
+    func snapshot() -> AccountsSnapshot {
+        let now = Date()
+        var displays = self.displays(now: now)
+
+        if let expiresAt = self.infoBannerExpiresAt, expiresAt < now {
+            self.infoBanner = nil
+            self.infoBannerExpiresAt = nil
+        }
+
+        let activeUsage = self.state.activeAccountUuid.flatMap { self.cache.usageByAccount[$0] }
+        let updatedAt = activeUsage?.fetchedAt
+            ?? self.cache.usageByAccount.values.map(\.fetchedAt).max()
+
+        let pace = self.learnedPace()
+        let demand = DemandCurve(
+            activity: pace.activity,
+            calendar: .current,
+            now: now,
+            currentIntensity: self.currentIntensity(pace: pace, now: now))
+        for index in displays.indices {
+            displays[index].insight = self.insight(for: displays[index], pace: pace, demand: demand, now: now)
+        }
+
+        let rosterWriteBanner = self.rosterWriteError.map {
+            Banner(
+                kind: .error,
+                message: "ClaudeBar can't save refreshed logins to \(CredentialStore.storeName) (\($0)). Leave it running to retry: quitting now signs those accounts out.")
+        }
+
+        return AccountsSnapshot(
+            displays: displays,
+            banner: rosterWriteBanner ?? self.errorBanner ?? self.infoBanner,
+            cost: self.cache.cost,
+            updatedAt: updatedAt,
+            fleet: self.fleetForecast(displays, pace: pace, demand: demand, now: now),
+            activity: pace.activity)
+    }
+
+    /// Why the last switch, sign-in or refresh went wrong, while it stands.
+    func errorMessage() -> String? {
+        self.errorBanner?.message
+    }
+
+    /// One row per account, in display order, with the "Next" badge on the
+    /// account auto-switching would move to first.
+    private func displays(now: Date) -> [AccountDisplay] {
+        let ordered = self.state.accounts.sorted { $0.displayOrder < $1.displayOrder }
+        var displays = ordered.map { account -> AccountDisplay in
+            let usage = self.cache.usageByAccount[account.id]
+            let isStale = usage.map {
+                now.timeIntervalSince($0.fetchedAt) > self.usageStaleDisplayInterval
+            } ?? true
+            return AccountDisplay(
+                account: account,
+                usage: usage,
+                isActive: account.id == self.state.activeAccountUuid,
+                isRecommended: false,
+                isStale: isStale,
+                limits: self.settings.limits(for: account.preferences),
+                insight: nil)
+        }
+        let recommendedId = AutoSwitchPlanner.rankedCandidates(displays, now: now).first?.id
+        if let index = displays.firstIndex(where: { $0.id == recommendedId }) {
+            displays[index].isRecommended = true
+        }
+        return displays
+    }
+
+    // MARK: - Pace and forecasts
+
+    private func learnedPace() -> PaceModel {
+        if let paceModel = self.paceModel { return paceModel }
+        let learned = PaceModel.learn(from: self.history, schedule: self.settings.workSchedule, calendar: .current)
+        self.paceModel = learned
+        return learned
+    }
+
+    /// How hard the user is working on the active account right now relative to
+    /// its typical pace; nil without recent readings to judge by.
+    private func currentIntensity(pace: PaceModel, now: Date) -> Double? {
+        guard let activeId = self.state.activeAccountUuid,
+              let current = self.history.currentPace(for: activeId, at: now)?.sessionPerHour
+        else { return nil }
+        guard let typical = pace.typicalPace(for: activeId)?.pace.sessionPerActiveHour, typical > 0 else {
+            // Without a typical pace to compare against, all that's known is
+            // whether work is happening.
+            return current > 0 ? 1 : 0
+        }
+        return max(0, current) / typical
+    }
+
+    private func insight(
+        for display: AccountDisplay, pace: PaceModel, demand: DemandCurve, now: Date) -> AccountInsight
+    {
+        let typical = pace.typicalPace(for: display.id)
+        let simulated = typical.flatMap { self.forecastAccount(display, pace: $0.pace, now: now) }
+        let weeklyHistory = display.usage?.weekly?.resetsAt.map {
+            self.history.weeklyPoints(for: display.id, windowResettingAt: $0)
+        }
+        return AccountInsight(
+            currentPace: self.history.currentPace(for: display.id, at: now),
+            typicalPace: typical?.pace,
+            isPacePooled: typical?.isPooled ?? false,
+            forecast: simulated.map { UsageForecaster.account($0, demand: demand) },
+            bankedHours: simulated?.bankedHours,
+            weeklyHistory: weeklyHistory ?? [])
+    }
+
+    private func fleetForecast(
+        _ displays: [AccountDisplay], pace: PaceModel, demand: DemandCurve, now: Date) -> FleetForecast?
+    {
+        // Every account has a pace, its own or the pooled one, once anything has
+        // been measured; before that there is nothing to forecast from.
+        guard pace.pooledPace != nil else { return nil }
+        let accounts = displays.compactMap { display in
+            pace.typicalPace(for: display.id).flatMap { self.forecastAccount(display, pace: $0.pace, now: now) }
+        }
+        guard !accounts.isEmpty else { return nil }
+        let activeId = displays.first { $0.isActive && !$0.account.needsRelogin }?.id
+        return UsageForecaster.fleet(accounts: accounts, activeId: activeId, demand: demand)
+    }
+
+    /// The account as the forecaster starts from: current figures, with windows
+    /// whose reset has passed treated as empty. Nil for accounts that can't work.
+    private func forecastAccount(
+        _ display: AccountDisplay, pace: TypicalPace, now: Date) -> UsageForecaster.Account?
+    {
+        guard let usage = display.usage, !display.account.needsRelogin else { return nil }
+        let sessionResetsAt = usage.session?.resetsAt.flatMap { $0 > now ? $0 : nil }
+        return UsageForecaster.Account(
+            id: display.id,
+            sessionPercent: Double(usage.session?.effectiveUsedPercent(at: now) ?? 0),
+            sessionResetsAt: sessionResetsAt,
+            weeklyPercent: Double(usage.weekly?.effectiveUsedPercent(at: now) ?? 0),
+            weeklyResetsAt: AutoSwitchPlanner.nextReset(
+                usage.weekly?.resetsAt, window: AutoSwitchPlanner.weeklyWindow, now: now),
+            limits: display.limits,
+            pace: pace,
+            isAvailable: display.account.preferences.allowsAutoSwitch,
+            displayOrder: display.account.displayOrder)
+    }
+
+    // MARK: - Reconcile
+
+    /// Compares the live credential item against the roster and resolves any
+    /// divergence: adopt external switches, harvest CLI-side token refreshes,
+    /// repair clobbers from lingering sessions, and capture brand-new logins.
+    func reconcile() async {
+        let liveBlob: Data
+        do {
+            liveBlob = try self.readLiveBlobCached()
+        } catch CredentialError.notFound {
+            self.errorBanner = Banner(
+                kind: .warning,
+                message: "No Claude Code login found. Add an account to ClaudeBar, or run claude and /login.")
+            return
+        } catch CredentialError.accessDenied, CredentialError.cancelled {
+            #if os(macOS)
+            let message = "Keychain access denied. Allow ClaudeBar to read the Claude Code credentials."
+            #else
+            let message = "ClaudeBar isn't allowed to read \(CredentialStore.claudeCredentialsFile.path)."
+            #endif
+            self.errorBanner = Banner(kind: .error, message: message)
+            return
+        } catch {
+            self.errorBanner = Banner(kind: .error, message: "Reading Claude Code's login failed: \(error)")
+            return
+        }
+
+        guard let liveTokens = Self.parseTokens(from: liveBlob) else {
+            self.errorBanner = Banner(
+                kind: .warning,
+                message: "Claude Code's login looks empty. Add an account to ClaudeBar, or run claude and /login.")
+            return
+        }
+
+        // In sync with the active account — the common case, no network needed.
+        if let activeUuid = self.state.activeAccountUuid,
+           let storedBlob = try? self.readRosterBlob(for: activeUuid),
+           let storedTokens = Self.parseTokens(from: storedBlob),
+           storedTokens.accessToken == liveTokens.accessToken
+        {
+            self.errorBanner = nil
+            return
+        }
+
+        // Token matches another roster account: the user switched outside ClaudeBar.
+        // Adopt it — reflect reality, never fight it.
+        for account in self.state.accounts where account.id != self.state.activeAccountUuid {
+            guard let storedBlob = try? self.readRosterBlob(for: account.id),
+                  let storedTokens = Self.parseTokens(from: storedBlob),
+                  storedTokens.accessToken == liveTokens.accessToken
+            else { continue }
+            self.logger.info("Adopting externally-switched account \(account.email, privacy: .private)")
+            self.state.activeAccountUuid = account.id
+            self.errorBanner = nil
+            self.saveState()
+            return
+        }
+
+        // Unknown token: identify who it belongs to.
+        var workingBlob = liveBlob
+        var workingTokens = liveTokens
+        let profile: OAuthProfile
+        do {
+            profile = try await self.fetchProfileRefreshingIfNeeded(blob: &workingBlob, tokens: &workingTokens)
+        } catch APIError.unauthorized, APIError.invalidGrant {
+            self.errorBanner = Banner(
+                kind: .warning,
+                message: "Claude Code's login expired. Sign in again through ClaudeBar, or run claude and /login.")
+            return
+        } catch {
+            // Network trouble — leave everything as-is and try again next tick.
+            self.logger.info("Reconcile profile fetch failed transiently: \(String(describing: error), privacy: .public)")
+            return
+        }
+
+        guard let uuid = profile.account?.uuid else {
+            self.logger.error("Profile response had no account uuid")
+            return
+        }
+
+        if uuid == self.state.activeAccountUuid {
+            // The CLI refreshed the active account's tokens; harvest them.
+            self.storeRosterBlob(workingBlob, for: uuid)
+            self.setNeedsRelogin(false, for: uuid)
+            self.refreshOauthAccountSnapshot(for: uuid)
+            self.errorBanner = nil
+            self.saveState()
+            return
+        }
+
+        if self.state.accounts.contains(where: { $0.id == uuid }) {
+            if self.state.activeAccountUuid == nil
+                || !self.state.accounts.contains(where: { $0.id == self.state.activeAccountUuid })
+            {
+                // No coherent active account to defend — adopt instead of repairing.
+                self.storeRosterBlob(workingBlob, for: uuid)
+                self.setNeedsRelogin(false, for: uuid)
+                self.state.activeAccountUuid = uuid
+                self.errorBanner = nil
+                self.saveState()
+                return
+            }
+            self.repairClobber(byAccount: uuid, freshBlob: workingBlob)
+            return
+        }
+
+        await self.captureNewAccount(uuid: uuid, profile: profile, blob: workingBlob)
+    }
+
+    /// A lingering claude session on old account X refreshed its token over our
+    /// swap. Save X's fresh tokens first (rotation orphaned the previous ones),
+    /// then restore the intended active account into the live item.
+    private func repairClobber(byAccount clobberUuid: String, freshBlob: Data) {
+        let now = Date()
+        var repairs = (self.clobberRepairsByUuid[clobberUuid] ?? [])
+            .filter { now.timeIntervalSince($0) < Self.clobberWindow }
+
+        let clobberEmail = self.state.accounts.first(where: { $0.id == clobberUuid })?.email ?? "another account"
+
+        // Freshest tokens always get saved, even when we stop repairing.
+        self.storeRosterBlob(freshBlob, for: clobberUuid)
+        self.setNeedsRelogin(false, for: clobberUuid)
+        self.saveState()
+
+        guard repairs.count < Self.clobberCap else {
+            self.errorBanner = Banner(
+                kind: .warning,
+                message: "A running claude session keeps re-authenticating \(clobberEmail). Close it, then Switch again.")
+            return
+        }
+
+        guard let activeUuid = self.state.activeAccountUuid,
+              let activeBlob = try? self.readRosterBlob(for: activeUuid)
+        else { return }
+
+        do {
+            try self.writeLiveBlobTracked(activeBlob)
+        } catch {
+            self.errorBanner = Banner(kind: .error, message: "Writing Claude Code's login failed: \(error)")
+            return
+        }
+        self.patchClaudeJson(oauthAccountRaw: self.state.accounts.first(where: { $0.id == activeUuid })?.oauthAccountRaw)
+
+        repairs.append(now)
+        self.clobberRepairsByUuid[clobberUuid] = repairs
+        self.logger.info("Repaired credential clobber by \(clobberEmail, privacy: .private) (\(repairs.count)/\(Self.clobberCap))")
+    }
+
+    /// Takes in a login Claude Code made itself that ClaudeBar hasn't seen: the
+    /// one it finds on first launch, or one from running claude and /login.
+    private func captureNewAccount(uuid: String, profile: OAuthProfile, blob: Data) async {
+        let email = profile.account?.email ?? "unknown@unknown"
+        let account = Account(
+            id: uuid,
+            email: email,
+            organizationName: profile.organization?.name,
+            oauthAccountRaw: Self.readOauthAccountRaw(matching: uuid),
+            displayOrder: (self.state.accounts.map(\.displayOrder).max() ?? -1) + 1,
+            needsRelogin: false,
+            preferences: .default)
+
+        self.storeRosterBlob(blob, for: uuid)
+        self.state.accounts.append(account)
+        self.state.activeAccountUuid = uuid
+        self.errorBanner = nil
+        self.saveState()
+        self.logger.info("Captured account \(email, privacy: .private)")
+
+        await self.fetchUsage(for: account, isActive: true)
+        self.saveUsage()
+    }
+
+    private func fetchProfileRefreshingIfNeeded(
+        blob: inout Data, tokens: inout OAuthTokens) async throws -> OAuthProfile
+    {
+        do {
+            return try await AnthropicAPI.fetchProfile(accessToken: tokens.accessToken)
+        } catch APIError.unauthorized {
+            guard let refreshToken = tokens.refreshToken else { throw APIError.unauthorized }
+            let refreshed = try await AnthropicAPI.refresh(refreshToken: refreshToken)
+            guard let newBlob = Self.applyRefresh(refreshed, to: blob),
+                  let newTokens = Self.parseTokens(from: newBlob)
+            else { throw APIError.decode(message: "Could not apply refreshed tokens") }
+            try self.writeLiveBlobTracked(newBlob)
+            blob = newBlob
+            tokens = newTokens
+            return try await AnthropicAPI.fetchProfile(accessToken: newTokens.accessToken)
+        }
+    }
+
+    // MARK: - Switch
+
+    /// Swaps the live credential item to `target`. Returns false (with a banner)
+    /// when the switch could not complete.
+    @discardableResult
+    func switchTo(accountUuid target: String, trigger: SwitchTrigger = .user) async -> Bool {
+        await self.reconcile()
+
+        guard let index = self.state.accounts.firstIndex(where: { $0.id == target }) else { return false }
+        if self.state.activeAccountUuid == target { return true }
+        let email = self.state.accounts[index].email
+        let previousEmail = self.state.accounts.first(where: { $0.id == self.state.activeAccountUuid })?.email
+        guard !self.state.accounts[index].needsRelogin else {
+            self.errorBanner = Banner(kind: .warning, message: "\(email) is signed out. Sign it in again first.")
+            return false
+        }
+
+        var blob: Data
+        do {
+            blob = try self.readRosterBlob(for: target)
+        } catch CredentialError.notFound {
+            self.setNeedsRelogin(true, for: target)
+            self.errorBanner = Banner(
+                kind: .warning,
+                message: "No stored credentials for \(email). Sign it in again to reconnect it.")
+            return false
+        } catch {
+            self.errorBanner = Banner(kind: .error, message: "Credential read for \(email) failed: \(error)")
+            return false
+        }
+        guard var tokens = Self.parseTokens(from: blob) else {
+            self.errorBanner = Banner(kind: .error, message: "Stored credentials for \(email) are unreadable.")
+            return false
+        }
+
+        // Refresh ahead of the swap when the token is about to expire, so the CLI
+        // starts with a working token.
+        let expiringSoon = tokens.expiresAt.map { $0 < Date().addingTimeInterval(Self.expiryRefreshMargin) } ?? false
+        if expiringSoon {
+            if let refreshToken = tokens.refreshToken {
+                do {
+                    let refreshed = try await AnthropicAPI.refresh(refreshToken: refreshToken)
+                    guard let newBlob = Self.applyRefresh(refreshed, to: blob),
+                          let newTokens = Self.parseTokens(from: newBlob)
+                    else {
+                        self.errorBanner = Banner(kind: .error, message: "Could not apply refreshed tokens for \(email).")
+                        return false
+                    }
+                    // Store first: if the live write fails, the rotated tokens must not be lost.
+                    self.storeRosterBlob(newBlob, for: target)
+                    blob = newBlob
+                    tokens = newTokens
+                } catch APIError.invalidGrant {
+                    self.state.accounts[index].needsRelogin = true
+                    self.saveState()
+                    self.errorBanner = Banner(
+                        kind: .warning,
+                        message: "\(email) is signed out. Sign it in again to use it.")
+                    return false
+                } catch {
+                    self.errorBanner = Banner(kind: .error, message: "Token refresh for \(email) failed: \(error)")
+                    return false
+                }
+            } else {
+                self.state.accounts[index].needsRelogin = true
+                self.saveState()
+            }
+        }
+
+        do {
+            try self.writeLiveBlobTracked(blob)
+        } catch {
+            self.errorBanner = Banner(kind: .error, message: "Writing Claude Code's login failed: \(error)")
+            return false
+        }
+        self.patchClaudeJson(oauthAccountRaw: self.state.accounts[index].oauthAccountRaw)
+
+        self.state.activeAccountUuid = target
+        self.clobberRepairsByUuid = [:]
+        self.errorBanner = nil
+        switch trigger {
+        case .user:
+            self.lastManualSwitchAt = Date()
+            self.infoBanner = Banner(kind: .info, message: "Switched to \(email).")
+            self.infoBannerExpiresAt = Date().addingTimeInterval(2 * 60)
+        case .automatic(let reason):
+            self.infoBanner = Banner(
+                kind: .info,
+                message: "Switched to \(email) automatically: \(previousEmail ?? "the previous account") \(reason).")
+            self.infoBannerExpiresAt = Date().addingTimeInterval(10 * 60)
+        }
+        self.saveState()
+
+        await self.reconcile()
+        return true
+    }
+
+    // MARK: - Sign In / Remove
+
+    /// Takes in an account signed into through `ClaudeSignIn`, beside the live
+    /// login rather than in it. The live login moves only when it has to: for
+    /// the active account's own sign-in, whose running sessions need the new
+    /// tokens, or when there is no active account to disturb. Returns what to
+    /// tell whoever started the sign-in.
+    func adoptSignIn(_ credentials: ClaudeSignIn.Credentials) async -> (succeeded: Bool, message: String) {
+        guard let tokens = Self.parseTokens(from: credentials.blob) else {
+            return self.reportSignInProblem("The sign-in finished, but its credentials were empty.")
+        }
+        let profile: OAuthProfile
+        do {
+            profile = try await AnthropicAPI.fetchProfile(accessToken: tokens.accessToken)
+        } catch {
+            return self.reportSignInProblem("Signed in, but ClaudeBar couldn't look the account up: \(error)")
+        }
+        guard let uuid = profile.account?.uuid else {
+            return self.reportSignInProblem("Signed in, but the account's profile had no id.")
+        }
+        do {
+            _ = try self.loadRosterBlobs()
+        } catch {
+            // loadRosterBlobs has put up a banner saying why.
+            return (false, "ClaudeBar can't read its stored accounts: \(error)")
+        }
+
+        let email = profile.account?.email ?? "unknown@unknown"
+        let oauthAccountRaw = credentials.claudeJson.flatMap { Self.oauthAccountRaw(inClaudeJson: $0, matching: uuid) }
+        self.storeRosterBlob(credentials.blob, for: uuid)
+        if let index = self.state.accounts.firstIndex(where: { $0.id == uuid }) {
+            self.state.accounts[index].needsRelogin = false
+            self.state.accounts[index].email = email
+            if let oauthAccountRaw {
+                self.state.accounts[index].oauthAccountRaw = oauthAccountRaw
+            }
+        } else {
+            self.state.accounts.append(Account(
+                id: uuid,
+                email: email,
+                organizationName: profile.organization?.name,
+                oauthAccountRaw: oauthAccountRaw,
+                displayOrder: (self.state.accounts.map(\.displayOrder).max() ?? -1) + 1,
+                needsRelogin: false,
+                preferences: .default))
+        }
+
+        let hasActiveAccount = self.state.accounts.contains { $0.id == self.state.activeAccountUuid }
+        let takesLiveLogin = uuid == self.state.activeAccountUuid || !hasActiveAccount
+        if takesLiveLogin {
+            do {
+                try self.writeLiveBlobTracked(credentials.blob)
+            } catch {
+                self.saveState()
+                let message = "Signed in to \(email), but writing Claude Code's login failed: \(error)"
+                self.errorBanner = Banner(kind: .error, message: message)
+                return (false, message)
+            }
+            self.patchClaudeJson(oauthAccountRaw: oauthAccountRaw)
+            self.state.activeAccountUuid = uuid
+            self.clobberRepairsByUuid = [:]
+        }
+        let message = takesLiveLogin ? "Signed in to \(email)." : "Signed in to \(email). Switch to it whenever you like."
+        self.errorBanner = nil
+        self.infoBanner = Banner(kind: .info, message: message)
+        self.infoBannerExpiresAt = Date().addingTimeInterval(2 * 60)
+        self.saveState()
+        self.logger.info("Signed in to \(email, privacy: .private)")
+
+        if let account = self.state.accounts.first(where: { $0.id == uuid }) {
+            await self.fetchUsage(for: account, isActive: takesLiveLogin)
+            self.saveUsage()
+        }
+        return (true, message)
+    }
+
+    /// Shows why a sign-in didn't go through, and hands the reason back.
+    @discardableResult
+    func reportSignInProblem(_ message: String) -> (succeeded: Bool, message: String) {
+        self.infoBanner = Banner(kind: .error, message: message)
+        self.infoBannerExpiresAt = Date().addingTimeInterval(5 * 60)
+        return (false, message)
+    }
+
+    /// Refuses to remove the active account. Returns false when refused.
+    @discardableResult
+    func removeAccount(accountUuid: String) -> Bool {
+        guard accountUuid != self.state.activeAccountUuid else { return false }
+        guard let index = self.state.accounts.firstIndex(where: { $0.id == accountUuid }) else { return false }
+        self.removeRosterBlob(for: accountUuid)
+        self.state.accounts.remove(at: index)
+        self.cache.usageByAccount.removeValue(forKey: accountUuid)
+        self.clobberRepairsByUuid.removeValue(forKey: accountUuid)
+        self.history.forget(accountId: accountUuid)
+        self.paceModel = nil
+        self.saveState()
+        self.saveCache()
+        self.saveHistory(at: Date())
+        return true
+    }
+
+    func setPreferences(_ preferences: AccountPreferences, for accountUuid: String) {
+        guard let index = self.state.accounts.firstIndex(where: { $0.id == accountUuid }),
+              self.state.accounts[index].preferences != preferences
+        else { return }
+        self.state.accounts[index].preferences = preferences
+        self.saveState()
+    }
+
+    // MARK: - Auto-switch
+
+    func apply(settings: UsageSettings) {
+        if settings.workSchedule != self.settings.workSchedule {
+            self.paceModel = nil
+        }
+        self.settings = settings
+    }
+
+    /// Moves the live login off an account that is at, or racing toward, its
+    /// limits. Runs after every usage refresh; the planner decides.
+    func autoSwitchIfNeeded() async {
+        guard self.settings.autoSwitchEnabled else { return }
+        var decision = self.switchDecision(now: Date())
+
+        // The chosen account's cached figures can be minutes old, and claude.ai or
+        // another machine may have used it since. Confirm them before moving the
+        // login; if fresh figures rule it out, the next best gets the same check.
+        var confirmed = Set<String>()
+        while case .switchTo(let accountId, _) = decision,
+              !confirmed.contains(accountId),
+              let account = self.state.accounts.first(where: { $0.id == accountId }),
+              let cached = self.cache.usageByAccount[accountId],
+              Date().timeIntervalSince(cached.fetchedAt) > AutoSwitchPlanner.candidateFreshness
+        {
+            confirmed.insert(accountId)
+            await self.fetchUsage(for: account, isActive: false)
+            self.saveUsage()
+            decision = self.switchDecision(now: Date())
+        }
+
+        switch decision {
+        case .stay:
+            return
+        case .noCandidate(let reason):
+            let activeEmail = self.state.accounts.first { $0.id == self.state.activeAccountUuid }?.email
+                ?? "The active account"
+            self.infoBanner = Banner(
+                kind: .warning,
+                message: "\(activeEmail) \(reason), but no other account has room under its limits. Staying put.")
+            self.infoBannerExpiresAt = Date().addingTimeInterval(5 * 60)
+        case .switchTo(let accountId, let reason):
+            self.logger.info("Auto-switching: \(reason.description, privacy: .public)")
+            guard await self.switchTo(accountUuid: accountId, trigger: .automatic(reason: reason)),
+                  let account = self.state.accounts.first(where: { $0.id == accountId })
+            else { return }
+            // The new account's figures drive the next decision; don't wait a cycle.
+            await self.fetchUsage(for: account, isActive: true)
+            self.saveUsage()
+        }
+    }
+
+    private func switchDecision(now: Date) -> AutoSwitchPlanner.Decision {
+        AutoSwitchPlanner.decide(
+            displays: self.displays(now: now),
+            settings: self.settings,
+            activePace: self.state.activeAccountUuid.flatMap { self.history.currentPace(for: $0, at: now) },
+            lastManualSwitchAt: self.lastManualSwitchAt,
+            now: now)
+    }
+
+    // MARK: - Usage fetching
+
+    /// Fetches usage for accounts that are due, active first, sequentially with
+    /// a ~1s stagger — never parallel bursts against the API.
+    func refreshUsage(force: Bool = false) async {
+        guard !self.isFetching else { return }
+        self.isFetching = true
+        defer { self.isFetching = false }
+
+        self.retryRosterWriteIfNeeded()
+        let now = Date()
+        let ordered = self.state.accounts.sorted {
+            let lhsActive = $0.id == self.state.activeAccountUuid
+            let rhsActive = $1.id == self.state.activeAccountUuid
+            if lhsActive != rhsActive { return lhsActive }
+            return $0.displayOrder < $1.displayOrder
+        }
+
+        var fetchedAny = false
+        for (position, account) in ordered.enumerated() {
+            let isActive = account.id == self.state.activeAccountUuid
+            if !force,
+               let cached = self.cache.usageByAccount[account.id],
+               !self.isRefreshDue(for: account, cached: cached, isActive: isActive, position: position, now: now)
+            {
+                continue
+            }
+            if account.needsRelogin { continue }
+            if fetchedAny {
+                try? await Task.sleep(for: .seconds(1))
+            }
+            await self.fetchUsage(for: account, isActive: isActive)
+            fetchedAny = true
+        }
+        if fetchedAny {
+            self.saveUsage()
+            self.saveState()
+        }
+    }
+
+    /// The active account follows the planner's schedule, which tightens as its
+    /// usage climbs; the others wait an extra minute per position so their
+    /// refreshes drift apart instead of landing in the same cycle. Any account is
+    /// due at once when one of its windows has reset since the last fetch.
+    private func isRefreshDue(
+        for account: Account, cached: AccountUsage, isActive: Bool, position: Int, now: Date) -> Bool
+    {
+        if cached.hasWindowResetSinceFetch(now: now) { return true }
+        let interval: TimeInterval
+        if isActive {
+            let display = AccountDisplay(
+                account: account,
+                usage: cached,
+                isActive: true,
+                isRecommended: false,
+                isStale: false,
+                limits: self.settings.limits(for: account.preferences),
+                insight: nil)
+            interval = AutoSwitchPlanner.activeRefreshInterval(
+                active: AutoSwitchPlanner.Candidate(display: display, now: now),
+                pace: self.history.currentPace(for: account.id, at: now),
+                settings: self.settings)
+        } else {
+            interval = self.settings.refreshInterval + TimeInterval(position * 60)
+        }
+        return now.timeIntervalSince(cached.fetchedAt) >= interval
+    }
+
+    private func storeUsage(_ raw: OAuthUsage, for account: Account) {
+        let usage = Self.mapUsage(raw, fetchedAt: Date())
+        self.cache.usageByAccount[account.id] = usage
+        self.history.record(UsageReading(usage: usage), for: account.id, at: usage.fetchedAt)
+        self.paceModel = nil
+        self.setNeedsRelogin(false, for: account.id)
+    }
+
+    private func fetchUsage(for account: Account, isActive: Bool) async {
+        // The active account's token comes from the live item — the CLI keeps it
+        // fresh. Inactive accounts use their roster blob.
+        var blob: Data
+        do {
+            blob = isActive
+                ? try self.readLiveBlobCached()
+                : try self.readRosterBlob(for: account.id)
+        } catch CredentialError.notFound where !isActive {
+            // The roster blob is gone; only a fresh sign-in can bring it back.
+            // A missing live item is reconcile's problem, not this account's.
+            self.logger.error("No roster credentials for \(account.email, privacy: .private); marking for re-login")
+            self.setNeedsRelogin(true, for: account.id)
+            return
+        } catch {
+            self.logger.error("Credential read for \(account.email, privacy: .private) failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+        guard var tokens = Self.parseTokens(from: blob) else { return }
+
+        // Refresh only when actually expired; the CLI owns routine refreshes of
+        // the active account.
+        if let expiresAt = tokens.expiresAt, expiresAt <= Date() {
+            switch await self.refreshTokens(blob: &blob, tokens: &tokens, for: account, isActive: isActive) {
+            case .refreshed: break
+            case .needsRelogin, .transientFailure: return
+            }
+        }
+
+        do {
+            let raw = try await AnthropicAPI.fetchUsage(accessToken: tokens.accessToken)
+            self.storeUsage(raw, for: account)
+        } catch APIError.unauthorized {
+            switch await self.refreshTokens(blob: &blob, tokens: &tokens, for: account, isActive: isActive) {
+            case .refreshed:
+                // A just-issued token turned away doesn't sign the account out:
+                // the refresh token it came with still works next cycle.
+                do {
+                    let raw = try await AnthropicAPI.fetchUsage(accessToken: tokens.accessToken)
+                    self.storeUsage(raw, for: account)
+                } catch {
+                    self.logger.info("Usage retry for \(account.email, privacy: .private) failed: \(String(describing: error), privacy: .public)")
+                }
+            case .needsRelogin, .transientFailure:
+                return
+            }
+        } catch APIError.rateLimited {
+            self.logger.info("Rate limited fetching usage for \(account.email, privacy: .private); skipping cycle")
+        } catch {
+            // Network or server trouble: keep the cache, snapshot() marks it stale.
+            self.logger.info("Usage fetch for \(account.email, privacy: .private) failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private enum RefreshOutcome {
+        case refreshed
+        case needsRelogin
+        case transientFailure
+    }
+
+    /// Signs the account out only when there is no refresh token or the token
+    /// endpoint refuses it with invalid_grant. A bare 401 or 403 can come from
+    /// a proxy or bot check in front of the endpoint, so like a network failure
+    /// it waits for the next cycle.
+    private func refreshTokens(
+        blob: inout Data, tokens: inout OAuthTokens,
+        for account: Account, isActive: Bool) async -> RefreshOutcome
+    {
+        guard let refreshToken = tokens.refreshToken else {
+            self.setNeedsRelogin(true, for: account.id)
+            return .needsRelogin
+        }
+        do {
+            let refreshed = try await AnthropicAPI.refresh(refreshToken: refreshToken)
+            guard let newBlob = Self.applyRefresh(refreshed, to: blob),
+                  let newTokens = Self.parseTokens(from: newBlob)
+            else { return .transientFailure }
+            // Persist rotated tokens before using them — rotation orphans the old ones.
+            if isActive {
+                do {
+                    try self.writeLiveBlobTracked(newBlob)
+                } catch {
+                    self.logger.error("Live keychain write after refresh failed: \(String(describing: error), privacy: .public)")
+                    return .transientFailure
+                }
+            }
+            self.storeRosterBlob(newBlob, for: account.id)
+            blob = newBlob
+            tokens = newTokens
+            return .refreshed
+        } catch APIError.invalidGrant {
+            self.setNeedsRelogin(true, for: account.id)
+            return .needsRelogin
+        } catch {
+            self.logger.info("Token refresh for \(account.email, privacy: .private) failed: \(String(describing: error), privacy: .public)")
+            return .transientFailure
+        }
+    }
+
+    func recordCost(_ cost: CostSnapshot) {
+        self.cache.cost = cost
+        self.saveCache()
+    }
+
+    // MARK: - Usage mapping
+
+    static func mapUsage(_ raw: OAuthUsage, fetchedAt: Date) -> AccountUsage {
+        var session: UsageMetric?
+        var weekly: UsageMetric?
+        var fable: UsageMetric?
+
+        func metric(label: String, percent: Double, resetsAt: Date?) -> UsageMetric {
+            UsageMetric(
+                label: label,
+                usedPercent: Int(max(0, min(100, percent)).rounded()),
+                resetsAt: resetsAt,
+                spentDescription: nil,
+                isUnlimited: false)
+        }
+
+        for limit in raw.limits ?? [] {
+            guard let percent = limit.percent else { continue }
+            switch limit.kind {
+            case "session":
+                session = metric(label: "Session", percent: percent, resetsAt: limit.resetsAt)
+            case "weekly_all":
+                weekly = metric(label: "Weekly", percent: percent, resetsAt: limit.resetsAt)
+            case "weekly_scoped":
+                let label = limit.scope?.model?.displayName ?? "Model"
+                fable = metric(label: label, percent: percent, resetsAt: limit.resetsAt)
+            default:
+                break
+            }
+        }
+
+        if session == nil, let window = raw.fiveHour, let utilization = window.utilization {
+            session = metric(label: "Session", percent: utilization, resetsAt: window.resetsAt)
+        }
+        if weekly == nil, let window = raw.sevenDay, let utilization = window.utilization {
+            weekly = metric(label: "Weekly", percent: utilization, resetsAt: window.resetsAt)
+        }
+        if fable == nil, let window = raw.sevenDayOpus, let utilization = window.utilization {
+            fable = metric(label: "Opus", percent: utilization, resetsAt: window.resetsAt)
+        }
+
+        var extraUsage: UsageMetric?
+        if let extra = raw.extraUsage, extra.isEnabled == true {
+            let divisor = pow(10.0, Double(extra.decimalPlaces ?? 2))
+            var spent: String?
+            if let used = extra.usedCredits, let limit = extra.monthlyLimit, limit > 0 {
+                spent = String(
+                    format: "$%.2f / $%.2f spent", used / divisor, limit / divisor)
+            }
+            extraUsage = UsageMetric(
+                label: "Extra Usage",
+                usedPercent: Int(max(0, min(100, extra.utilization ?? 0)).rounded()),
+                resetsAt: nil,
+                spentDescription: spent,
+                isUnlimited: false)
+        }
+
+        return AccountUsage(
+            session: session, weekly: weekly, fable: fable,
+            extraUsage: extraUsage, fetchedAt: fetchedAt)
+    }
+
+    // MARK: - Credential blob handling
+
+    private struct OAuthTokens {
+        let accessToken: String
+        let refreshToken: String?
+        let expiresAt: Date?
+    }
+
+    private static func parseTokens(from blob: Data) -> OAuthTokens? {
+        guard let root = try? JSONSerialization.jsonObject(with: blob) as? [String: Any],
+              let oauth = root["claudeAiOauth"] as? [String: Any],
+              let accessToken = oauth["accessToken"] as? String,
+              !accessToken.isEmpty
+        else { return nil }
+        let expiresAt = (oauth["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+        return OAuthTokens(
+            accessToken: accessToken,
+            refreshToken: oauth["refreshToken"] as? String,
+            expiresAt: expiresAt)
+    }
+
+    /// Rewrites only the token fields inside `claudeAiOauth`, leaving every other
+    /// field of the blob untouched.
+    private static func applyRefresh(_ refreshed: RefreshedTokens, to blob: Data) -> Data? {
+        guard let accessToken = refreshed.accessToken,
+              var root = try? JSONSerialization.jsonObject(with: blob) as? [String: Any],
+              var oauth = root["claudeAiOauth"] as? [String: Any]
+        else { return nil }
+        oauth["accessToken"] = accessToken
+        if let refreshToken = refreshed.refreshToken {
+            oauth["refreshToken"] = refreshToken
+        }
+        if let expiresIn = refreshed.expiresIn {
+            oauth["expiresAt"] = ((Date().timeIntervalSince1970 + expiresIn) * 1000).rounded()
+        }
+        root["claudeAiOauth"] = oauth
+        return try? JSONSerialization.data(withJSONObject: root)
+    }
+
+    private func readLiveBlobCached() throws -> Data {
+        if let cached = self.liveBlobCache,
+           Date().timeIntervalSince(cached.readAt) < Self.liveBlobCacheTTL
+        {
+            return cached.blob
+        }
+        let blob = try CredentialStore.readLiveBlob()
+        self.liveBlobCache = (blob, Date())
+        return blob
+    }
+
+    private func writeLiveBlobTracked(_ blob: Data) throws {
+        try CredentialStore.writeLiveBlob(blob)
+        self.liveBlobCache = (blob, Date())
+    }
+
+    /// Loads the roster item once per launch. A missing item means an empty
+    /// roster; access-denied propagates so a denied prompt never gets mistaken
+    /// for "no accounts" (persisting on top of that would lose stored blobs).
+    /// A failed load is cached for the session: retrying every cycle would
+    /// turn one denied prompt into an endless prompt loop.
+    private func loadRosterBlobs() throws -> [String: Data] {
+        if let rosterBlobs = self.rosterBlobs { return rosterBlobs }
+        if let error = self.rosterLoadError { throw error }
+        do {
+            let data = try CredentialStore.readRoster()
+            let decoded = (try? JSONDecoder().decode([String: Data].self, from: data)) ?? [:]
+            self.rosterBlobs = decoded
+            return decoded
+        } catch CredentialError.notFound {
+            self.rosterBlobs = [:]
+            return [:]
+        } catch let error as CredentialError {
+            self.rosterLoadError = error
+            self.errorBanner = Banner(
+                kind: .error,
+                message: "ClaudeBar can't read its stored accounts (\(error)). Restart ClaudeBar to retry.")
+            throw error
+        }
+    }
+
+    private func readRosterBlob(for uuid: String) throws -> Data {
+        guard let blob = try self.loadRosterBlobs()[uuid] else { throw CredentialError.notFound }
+        return blob
+    }
+
+    private func storeRosterBlob(_ blob: Data, for uuid: String) {
+        guard var blobs = try? self.loadRosterBlobs() else {
+            self.logger.error("Roster keychain read failed; not persisting blob for \(uuid, privacy: .public)")
+            return
+        }
+        blobs[uuid] = blob
+        self.persistRosterBlobs(blobs)
+    }
+
+    private func removeRosterBlob(for uuid: String) {
+        guard var blobs = try? self.loadRosterBlobs(), blobs[uuid] != nil else { return }
+        blobs.removeValue(forKey: uuid)
+        self.persistRosterBlobs(blobs)
+    }
+
+    private func persistRosterBlobs(_ blobs: [String: Data]) {
+        self.rosterBlobs = blobs
+        do {
+            let data = try JSONEncoder().encode(blobs)
+            try CredentialStore.writeRoster(data)
+            self.rosterWriteError = nil
+        } catch {
+            self.rosterWriteError = error
+            self.logger.error("Roster keychain write failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private func retryRosterWriteIfNeeded() {
+        guard self.rosterWriteError != nil, let blobs = self.rosterBlobs else { return }
+        self.persistRosterBlobs(blobs)
+    }
+
+    private func setNeedsRelogin(_ value: Bool, for uuid: String) {
+        guard let index = self.state.accounts.firstIndex(where: { $0.id == uuid }),
+              self.state.accounts[index].needsRelogin != value
+        else { return }
+        self.state.accounts[index].needsRelogin = value
+        self.saveState()
+    }
+
+    // MARK: - ~/.claude.json
+
+    private static var claudeJsonURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude.json")
+    }
+
+    /// The `oauthAccount` object from ~/.claude.json, verbatim, if it belongs to
+    /// the given account.
+    private static func readOauthAccountRaw(matching uuid: String) -> Data? {
+        guard let data = try? Data(contentsOf: self.claudeJsonURL) else { return nil }
+        return self.oauthAccountRaw(inClaudeJson: data, matching: uuid)
+    }
+
+    /// The `oauthAccount` object from a .claude.json's contents, verbatim, if it
+    /// belongs to the given account.
+    private static func oauthAccountRaw(inClaudeJson data: Data, matching uuid: String) -> Data? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let oauthAccount = root["oauthAccount"] as? [String: Any],
+              oauthAccount["accountUuid"] as? String == uuid
+        else { return nil }
+        return try? JSONSerialization.data(withJSONObject: oauthAccount)
+    }
+
+    private func refreshOauthAccountSnapshot(for uuid: String) {
+        guard let raw = Self.readOauthAccountRaw(matching: uuid),
+              let index = self.state.accounts.firstIndex(where: { $0.id == uuid })
+        else { return }
+        self.state.accounts[index].oauthAccountRaw = raw
+    }
+
+    /// Read-modify-write touching only the `oauthAccount` key. Failures are
+    /// non-fatal: the CLI rebuilds this metadata on its own after a session.
+    private func patchClaudeJson(oauthAccountRaw: Data?) {
+        guard let raw = oauthAccountRaw else { return }
+        let url = Self.claudeJsonURL
+        do {
+            let data = try Data(contentsOf: url)
+            guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw APIError.decode(message: "~/.claude.json is not an object")
+            }
+            root["oauthAccount"] = try JSONSerialization.jsonObject(with: raw)
+            let output = try JSONSerialization.data(withJSONObject: root)
+            try output.write(to: url, options: .atomic)
+        } catch {
+            self.logger.error("Patching ~/.claude.json failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    // MARK: - Persistence
+
+    private static var stateURL: URL {
+        AppPaths.support.appendingPathComponent("accounts.json")
+    }
+
+    private static var cacheURL: URL {
+        AppPaths.caches.appendingPathComponent("usage-cache-v2.json")
+    }
+
+    private static func loadState() -> AccountsState {
+        guard let data = try? Data(contentsOf: self.stateURL),
+              let decoded = try? JSONDecoder().decode(AccountsState.self, from: data)
+        else { return .empty }
+        return decoded
+    }
+
+    private static func loadCache() -> UsageCacheFile {
+        guard let data = try? Data(contentsOf: self.cacheURL),
+              let decoded = try? JSONDecoder().decode(UsageCacheFile.self, from: data)
+        else { return .empty }
+        return decoded
+    }
+
+    private func saveState() {
+        Self.save(self.state, to: Self.stateURL)
+    }
+
+    private func saveCache() {
+        Self.save(self.cache, to: Self.cacheURL)
+    }
+
+    /// After a fetch: the cache always, the history when it is due.
+    private func saveUsage() {
+        self.saveCache()
+        let now = Date()
+        if let savedAt = self.historySavedAt, now.timeIntervalSince(savedAt) < Self.historySaveInterval {
+            return
+        }
+        self.saveHistory(at: now)
+    }
+
+    private func saveHistory(at now: Date) {
+        self.history.save()
+        self.historySavedAt = now
+    }
+
+    private static func save<Value: Encodable>(_ value: Value, to url: URL) {
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(value)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            Logger(subsystem: "net.vinnysaj.ClaudeBar", category: "accounts")
+                .error("Persist to \(url.lastPathComponent, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+}

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build the debug binary and sign it with a stable identity.
+# Build the debug app and CLI, and sign the app with a stable identity.
 #
 # The signature matters: ClaudeBar reads the "Claude Code-credentials" keychain
 # item, and the keychain's "Always Allow" grant is tied to the app's signing
@@ -19,9 +19,10 @@ if [[ -z "$IDENTITY" && -f release/signing-identity ]]; then
 fi
 
 swift build "$@"
+# The identifier stays "ClaudeBar" so grants made to earlier builds still hold.
 if [[ -n "$IDENTITY" ]]; then
-    codesign --force --sign "$IDENTITY" .build/debug/ClaudeBar
-    echo "Signed .build/debug/ClaudeBar with: $IDENTITY"
+    codesign --force --sign "$IDENTITY" --identifier ClaudeBar .build/debug/ClaudeBarApp
+    echo "Signed .build/debug/ClaudeBarApp with: $IDENTITY"
 else
     echo "warning: no signing identity (release/signing-identity or CODESIGN_IDENTITY); ad-hoc build will re-prompt for keychain access" >&2
 fi

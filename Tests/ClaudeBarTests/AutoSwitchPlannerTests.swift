@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import ClaudeBar
+@testable import ClaudeBarCore
 
 private let now = UsageFixture.now
 

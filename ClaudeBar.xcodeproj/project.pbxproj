@@ -7,29 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3942E525BF3AC6F1B5910F27 /* Entry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A7AEA870A698B46C8211BD1 /* Entry.swift */; };
+		19058299369E783CA097E331 /* ClaudeBarCLI in Frameworks */ = {isa = PBXBuildFile; productRef = BD7701606781F7AD3CB25163 /* ClaudeBarCLI */; };
+		6D2A1050B636052714E1AD5F /* claudebar in Embed Command Line Tool */ = {isa = PBXBuildFile; fileRef = 74463B26A27ABBEF6687E153 /* claudebar */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		9D30B07808A0E9C45DBB298B /* CommandLineTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9087B7DA3F0A1C01B8BB882 /* CommandLineTool.swift */; };
+		298C6C12B6C62741E8531C31 /* SignInLinkBehavior.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB4EDBCC278A85CE779A1C5D /* SignInLinkBehavior.swift */; };
+		556A1D55D0E4991ADFFC51F5 /* KeyCombo.swift in Sources */ = {isa = PBXBuildFile; fileRef = F031BFDFBE61F6C00F0E11A3 /* KeyCombo.swift */; };
 		165537AEABCB033E829853EA /* ClaudeBarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */; };
-		EB1BDA4E1CFC85DD1D902C70 /* ClaudeSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DA1B31CE578071C2F1ADE1 /* ClaudeSignIn.swift */; };
-		2F2FFF2150570CB6E1DECCCB /* CostScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC9AD88B82AC5CEC3672AB5 /* CostScanner.swift */; };
-		4A1B2C3D4E5F60718293A4B5 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2C3D4E5F60718293A4B5C6 /* KeychainStore.swift */; };
-		558CD7D3D3E9368292E25611 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E389EF73BF226A5B46A7D42A /* Models.swift */; };
-		6C3D4E5F60718293A4B5C6D7 /* AnthropicAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E5F60718293A4B5C6D7E8 /* AnthropicAPI.swift */; };
-		8E5F60718293A4B5C6D7E8F9 /* AccountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F60718293A4B5C6D7E8F90A /* AccountManager.swift */; };
 		AA35BC66FACAFAF684F426D9 /* IconRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 285790D7C7E97AC740DBBF51 /* IconRenderer.swift */; };
 		AB10203040506070809010A1 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AB10203040506070809010A2 /* Sparkle */; };
+		602A5C4F2587519CB3EE1BE5 /* ClaudeBarCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5B382AED64E9D30F9DD41463 /* ClaudeBarCore */; };
 		B9739EFA1F1557CADAFD84FE /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3FD5A6CF390B4AC977EB9ED /* StatusItemController.swift */; };
-		C1D2E3F405162738495A6B7C /* PricingTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F405162738495A6B7C8D /* PricingTable.swift */; };
-		DCD92DAF6BED1377B7DFD1BA /* Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70C6DCEB5BB23BA7D1AC95F4 /* Formatting.swift */; };
 		F1A2B3C4D5E6071829300001 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300002 /* HotKeyManager.swift */; };
 		F1A2B3C4D5E6071829300003 /* ShortcutRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300004 /* ShortcutRecorder.swift */; };
 		F1A2B3C4D5E6071829300005 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */; };
 		F1A2B3C4D5E6071829300007 /* HoverBackgroundButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300008 /* HoverBackgroundButtonStyle.swift */; };
-		F1A2B3C4D5E6071829300011 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300010 /* Preferences.swift */; };
-		F1A2B3C4D5E6071829300013 /* UsageSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300012 /* UsageSettings.swift */; };
-		F1A2B3C4D5E6071829300017 /* AutoSwitchPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6071829300016 /* AutoSwitchPlanner.swift */; };
-		D81E737DF46CDB4C0537A4AB /* PaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09029FE5E45287F4D6B82664 /* PaceModel.swift */; };
-		5B103811DA8524726D436DF9 /* UsageForecaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C83010766B31880E1466651 /* UsageForecaster.swift */; };
-		6AC55A92C9BC23AB4A8BF44B /* UsageHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03782ADE27D8B6FCDB2903EE /* UsageHistory.swift */; };
-		56F8819F52CF01D742D7951E /* WorkSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1293B98F4D8F71672AE09B /* WorkSchedule.swift */; };
 		2088BB8DC4FF034B573F8358 /* AccountDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A914F9C593ED00757C77BF /* AccountDetailView.swift */; };
 		2201A36579D894B13F351A57 /* AccountRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406A6D636DC9D73608817898 /* AccountRow.swift */; };
 		34E4CEBD11B83A9AFAEFA458 /* CostPaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDE95EEE28A5B829BF659413 /* CostPaceViews.swift */; };
@@ -40,29 +32,19 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		1AC9AD88B82AC5CEC3672AB5 /* CostScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CostScanner.swift; sourceTree = "<group>"; };
+		74463B26A27ABBEF6687E153 /* claudebar */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = claudebar; sourceTree = BUILT_PRODUCTS_DIR; };
+		2A7AEA870A698B46C8211BD1 /* Entry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Entry.swift; sourceTree = "<group>"; };
+		B9087B7DA3F0A1C01B8BB882 /* CommandLineTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandLineTool.swift; sourceTree = "<group>"; };
+		BB4EDBCC278A85CE779A1C5D /* SignInLinkBehavior.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInLinkBehavior.swift; sourceTree = "<group>"; };
+		F031BFDFBE61F6C00F0E11A3 /* KeyCombo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCombo.swift; sourceTree = "<group>"; };
 		285790D7C7E97AC740DBBF51 /* IconRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconRenderer.swift; sourceTree = "<group>"; };
-		5B2C3D4E5F60718293A4B5C6 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
-		70C6DCEB5BB23BA7D1AC95F4 /* Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatting.swift; sourceTree = "<group>"; };
-		7D4E5F60718293A4B5C6D7E8 /* AnthropicAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicAPI.swift; sourceTree = "<group>"; };
-		9F60718293A4B5C6D7E8F90A /* AccountManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountManager.swift; sourceTree = "<group>"; };
 		B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeBarApp.swift; sourceTree = "<group>"; };
-		D9DA1B31CE578071C2F1ADE1 /* ClaudeSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSignIn.swift; sourceTree = "<group>"; };
 		CC6F48A4AF790020100A205D /* ClaudeBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		D2E3F405162738495A6B7C8D /* PricingTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingTable.swift; sourceTree = "<group>"; };
-		E389EF73BF226A5B46A7D42A /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E3FD5A6CF390B4AC977EB9ED /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6071829300002 /* HotKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyManager.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6071829300004 /* ShortcutRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutRecorder.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
 		F1A2B3C4D5E6071829300008 /* HoverBackgroundButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoverBackgroundButtonStyle.swift; sourceTree = "<group>"; };
-		F1A2B3C4D5E6071829300010 /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
-		F1A2B3C4D5E6071829300012 /* UsageSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSettings.swift; sourceTree = "<group>"; };
-		F1A2B3C4D5E6071829300016 /* AutoSwitchPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSwitchPlanner.swift; sourceTree = "<group>"; };
-		09029FE5E45287F4D6B82664 /* PaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaceModel.swift; sourceTree = "<group>"; };
-		0C83010766B31880E1466651 /* UsageForecaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageForecaster.swift; sourceTree = "<group>"; };
-		03782ADE27D8B6FCDB2903EE /* UsageHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageHistory.swift; sourceTree = "<group>"; };
-		DA1293B98F4D8F71672AE09B /* WorkSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkSchedule.swift; sourceTree = "<group>"; };
 		75A914F9C593ED00757C77BF /* AccountDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDetailView.swift; sourceTree = "<group>"; };
 		406A6D636DC9D73608817898 /* AccountRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountRow.swift; sourceTree = "<group>"; };
 		CDE95EEE28A5B829BF659413 /* CostPaceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CostPaceViews.swift; sourceTree = "<group>"; };
@@ -78,16 +60,50 @@
 			buildActionMask = 2147483647;
 			files = (
 				AB10203040506070809010A1 /* Sparkle in Frameworks */,
+				602A5C4F2587519CB3EE1BE5 /* ClaudeBarCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EE982FA8357A5D8BD0B0F8EE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				19058299369E783CA097E331 /* ClaudeBarCLI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		DE55C69603ADEE0F32DC8205 /* Embed Command Line Tool */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				6D2A1050B636052714E1AD5F /* claudebar in Embed Command Line Tool */,
+			);
+			name = "Embed Command Line Tool";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		2770A8ED4D157C1D853B7AA1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 19EA1BF1C305A0496DC246B7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7A9C5B7040451FD77157623D;
+			remoteInfo = ClaudeBarTool;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXGroup section */
 		41556B7495FE48059E8A346C /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				CC6F48A4AF790020100A205D /* ClaudeBar.app */,
+				74463B26A27ABBEF6687E153 /* claudebar */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,29 +111,22 @@
 		C7659DE78B4D9A0574CC0F6C /* ClaudeBar */ = {
 			isa = PBXGroup;
 			children = (
-				9F60718293A4B5C6D7E8F90A /* AccountManager.swift */,
-				7D4E5F60718293A4B5C6D7E8 /* AnthropicAPI.swift */,
 				B5293526F91B53326FAAF6B5 /* ClaudeBarApp.swift */,
-				D9DA1B31CE578071C2F1ADE1 /* ClaudeSignIn.swift */,
-				1AC9AD88B82AC5CEC3672AB5 /* CostScanner.swift */,
-				70C6DCEB5BB23BA7D1AC95F4 /* Formatting.swift */,
 				285790D7C7E97AC740DBBF51 /* IconRenderer.swift */,
-				5B2C3D4E5F60718293A4B5C6 /* KeychainStore.swift */,
-				E389EF73BF226A5B46A7D42A /* Models.swift */,
-				FBABAF6CF140955B66B3D2F7 /* Pace */,
 				5524117ECFD7642F325CA5BA /* Panel */,
-				D2E3F405162738495A6B7C8D /* PricingTable.swift */,
 				F1A2B3C4D5E607182930000C /* Settings */,
 				E3FD5A6CF390B4AC977EB9ED /* StatusItemController.swift */,
 				F1A2B3C4D5E607182930000A /* Styles */,
 			);
-			path = ClaudeBar;
+			name = ClaudeBar;
+			path = Sources/ClaudeBarApp;
 			sourceTree = "<group>";
 		};
 		D8FCABBFB54A4EE1B4A360FF = {
 			isa = PBXGroup;
 			children = (
 				C7659DE78B4D9A0574CC0F6C /* ClaudeBar */,
+				06F9D270D3943128835729EB /* claudebar */,
 				41556B7495FE48059E8A346C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -141,9 +150,9 @@
 		F1A2B3C4D5E607182930000C /* Settings */ = {
 			isa = PBXGroup;
 			children = (
-				F1A2B3C4D5E6071829300018 /* AutoSwitch */,
+				B9087B7DA3F0A1C01B8BB882 /* CommandLineTool.swift */,
+				BB4EDBCC278A85CE779A1C5D /* SignInLinkBehavior.swift */,
 				F1A2B3C4D5E607182930000D /* HotKey */,
-				F1A2B3C4D5E6071829300010 /* Preferences.swift */,
 				F1A2B3C4D5E6071829300006 /* SettingsWindow.swift */,
 			);
 			path = Settings;
@@ -152,30 +161,11 @@
 		F1A2B3C4D5E607182930000D /* HotKey */ = {
 			isa = PBXGroup;
 			children = (
+				F031BFDFBE61F6C00F0E11A3 /* KeyCombo.swift */,
 				F1A2B3C4D5E6071829300002 /* HotKeyManager.swift */,
 				F1A2B3C4D5E6071829300004 /* ShortcutRecorder.swift */,
 			);
 			path = HotKey;
-			sourceTree = "<group>";
-		};
-		F1A2B3C4D5E6071829300018 /* AutoSwitch */ = {
-			isa = PBXGroup;
-			children = (
-				F1A2B3C4D5E6071829300016 /* AutoSwitchPlanner.swift */,
-				F1A2B3C4D5E6071829300012 /* UsageSettings.swift */,
-			);
-			path = AutoSwitch;
-			sourceTree = "<group>";
-		};
-		FBABAF6CF140955B66B3D2F7 /* Pace */ = {
-			isa = PBXGroup;
-			children = (
-				09029FE5E45287F4D6B82664 /* PaceModel.swift */,
-				0C83010766B31880E1466651 /* UsageForecaster.swift */,
-				03782ADE27D8B6FCDB2903EE /* UsageHistory.swift */,
-				DA1293B98F4D8F71672AE09B /* WorkSchedule.swift */,
-			);
-			path = Pace;
 			sourceTree = "<group>";
 		};
 		5524117ECFD7642F325CA5BA /* Panel */ = {
@@ -192,6 +182,14 @@
 			path = Panel;
 			sourceTree = "<group>";
 		};
+		06F9D270D3943128835729EB /* claudebar */ = {
+			isa = PBXGroup;
+			children = (
+				2A7AEA870A698B46C8211BD1 /* Entry.swift */,
+			);
+			path = Sources/claudebar;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -201,20 +199,50 @@
 			buildPhases = (
 				FD19FF3FC0F75EA711755640 /* Sources */,
 				AB10203040506070809010A3 /* Frameworks */,
+				DE55C69603ADEE0F32DC8205 /* Embed Command Line Tool */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0896E7CB2D8607425D812A9D /* PBXTargetDependency */,
 			);
 			name = ClaudeBar;
 			packageProductDependencies = (
 				AB10203040506070809010A2 /* Sparkle */,
+				5B382AED64E9D30F9DD41463 /* ClaudeBarCore */,
 			);
 			productName = ClaudeBar;
 			productReference = CC6F48A4AF790020100A205D /* ClaudeBar.app */;
 			productType = "com.apple.product-type.application";
 		};
+		7A9C5B7040451FD77157623D /* ClaudeBarTool */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9945FD67F730129167A6BCEF /* Build configuration list for PBXNativeTarget "ClaudeBarTool" */;
+			buildPhases = (
+				00B4EFA461B1DE89F8DF168D /* Sources */,
+				EE982FA8357A5D8BD0B0F8EE /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ClaudeBarTool;
+			packageProductDependencies = (
+				BD7701606781F7AD3CB25163 /* ClaudeBarCLI */,
+			);
+			productName = ClaudeBarTool;
+			productReference = 74463B26A27ABBEF6687E153 /* claudebar */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		0896E7CB2D8607425D812A9D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7A9C5B7040451FD77157623D /* ClaudeBarTool */;
+			targetProxy = 2770A8ED4D157C1D853B7AA1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		19EA1BF1C305A0496DC246B7 /* Project object */ = {
@@ -224,6 +252,9 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					63DE0F2C7D945007D1D364EC = {
+						ProvisioningStyle = Automatic;
+					};
+					7A9C5B7040451FD77157623D = {
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -239,6 +270,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AB10203040506070809010A0 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				3EFED43475F02F21F67B836D /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 41556B7495FE48059E8A346C /* Products */;
@@ -246,6 +278,7 @@
 			projectRoot = "";
 			targets = (
 				63DE0F2C7D945007D1D364EC /* ClaudeBar */,
+				7A9C5B7040451FD77157623D /* ClaudeBarTool */,
 			);
 		};
 /* End PBXProject section */
@@ -256,27 +289,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				165537AEABCB033E829853EA /* ClaudeBarApp.swift in Sources */,
-				EB1BDA4E1CFC85DD1D902C70 /* ClaudeSignIn.swift in Sources */,
-				2F2FFF2150570CB6E1DECCCB /* CostScanner.swift in Sources */,
-				DCD92DAF6BED1377B7DFD1BA /* Formatting.swift in Sources */,
 				AA35BC66FACAFAF684F426D9 /* IconRenderer.swift in Sources */,
-				558CD7D3D3E9368292E25611 /* Models.swift in Sources */,
-				C1D2E3F405162738495A6B7C /* PricingTable.swift in Sources */,
 				B9739EFA1F1557CADAFD84FE /* StatusItemController.swift in Sources */,
-				4A1B2C3D4E5F60718293A4B5 /* KeychainStore.swift in Sources */,
-				6C3D4E5F60718293A4B5C6D7 /* AnthropicAPI.swift in Sources */,
-				8E5F60718293A4B5C6D7E8F9 /* AccountManager.swift in Sources */,
 				F1A2B3C4D5E6071829300001 /* HotKeyManager.swift in Sources */,
 				F1A2B3C4D5E6071829300003 /* ShortcutRecorder.swift in Sources */,
 				F1A2B3C4D5E6071829300005 /* SettingsWindow.swift in Sources */,
 				F1A2B3C4D5E6071829300007 /* HoverBackgroundButtonStyle.swift in Sources */,
-				F1A2B3C4D5E6071829300011 /* Preferences.swift in Sources */,
-				F1A2B3C4D5E6071829300013 /* UsageSettings.swift in Sources */,
-				F1A2B3C4D5E6071829300017 /* AutoSwitchPlanner.swift in Sources */,
-				D81E737DF46CDB4C0537A4AB /* PaceModel.swift in Sources */,
-				5B103811DA8524726D436DF9 /* UsageForecaster.swift in Sources */,
-				6AC55A92C9BC23AB4A8BF44B /* UsageHistory.swift in Sources */,
-				56F8819F52CF01D742D7951E /* WorkSchedule.swift in Sources */,
 				2088BB8DC4FF034B573F8358 /* AccountDetailView.swift in Sources */,
 				2201A36579D894B13F351A57 /* AccountRow.swift in Sources */,
 				34E4CEBD11B83A9AFAEFA458 /* CostPaceViews.swift in Sources */,
@@ -284,6 +302,17 @@
 				23FD4B1D40FF288195120CDD /* HostedMenuItem.swift in Sources */,
 				F219AC9055BF2435441405B9 /* PanelModel.swift in Sources */,
 				A6C83DBAB0EEB3EBF8334BA2 /* PanelSections.swift in Sources */,
+				9D30B07808A0E9C45DBB298B /* CommandLineTool.swift in Sources */,
+				298C6C12B6C62741E8531C31 /* SignInLinkBehavior.swift in Sources */,
+				556A1D55D0E4991ADFFC51F5 /* KeyCombo.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00B4EFA461B1DE89F8DF168D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3942E525BF3AC6F1B5910F27 /* Entry.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -295,7 +324,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				AUTOMATION_APPLE_EVENTS = NO;
-				CODE_SIGN_ENTITLEMENTS = ClaudeBar/ClaudeBar.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/ClaudeBarApp/ClaudeBar.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 16;
@@ -308,7 +337,7 @@
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ClaudeBar/Info.plist;
+				INFOPLIST_FILE = Sources/ClaudeBarApp/Info.plist;
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
 				INFOPLIST_KEY_CFBundleDisplayName = ClaudeBar;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -337,7 +366,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				AUTOMATION_APPLE_EVENTS = NO;
-				CODE_SIGN_ENTITLEMENTS = ClaudeBar/ClaudeBar.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/ClaudeBarApp/ClaudeBar.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 16;
@@ -350,7 +379,7 @@
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ClaudeBar/Info.plist;
+				INFOPLIST_FILE = Sources/ClaudeBarApp/Info.plist;
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
 				INFOPLIST_KEY_CFBundleDisplayName = ClaudeBar;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -503,6 +532,52 @@
 			};
 			name = Release;
 		};
+		8D1E8A646134C84FC21087C0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 16;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = T5XCUP79BU;
+				ENABLE_HARDENED_RUNTIME = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 3.1.5;
+				PRODUCT_BUNDLE_IDENTIFIER = net.vinnysaj.claudebar.cli;
+				PRODUCT_MODULE_NAME = ClaudeBarTool;
+				PRODUCT_NAME = claudebar;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		C5D6BCD2FDF271E242AA8B17 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 16;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = T5XCUP79BU;
+				ENABLE_HARDENED_RUNTIME = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 3.1.5;
+				PRODUCT_BUNDLE_IDENTIFIER = net.vinnysaj.claudebar.cli;
+				PRODUCT_MODULE_NAME = ClaudeBarTool;
+				PRODUCT_NAME = claudebar;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -524,7 +599,23 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		9945FD67F730129167A6BCEF /* Build configuration list for PBXNativeTarget "ClaudeBarTool" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8D1E8A646134C84FC21087C0 /* Debug */,
+				C5D6BCD2FDF271E242AA8B17 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		3EFED43475F02F21F67B836D /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
 		AB10203040506070809010A0 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
@@ -542,6 +633,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AB10203040506070809010A0 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		5B382AED64E9D30F9DD41463 /* ClaudeBarCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3EFED43475F02F21F67B836D /* XCLocalSwiftPackageReference "." */;
+			productName = ClaudeBarCore;
+		};
+		BD7701606781F7AD3CB25163 /* ClaudeBarCLI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3EFED43475F02F21F67B836D /* XCLocalSwiftPackageReference "." */;
+			productName = ClaudeBarCLI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
