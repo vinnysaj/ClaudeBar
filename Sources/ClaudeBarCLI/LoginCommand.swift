@@ -8,9 +8,9 @@ struct LoginCommand: AsyncParsableCommand {
         abstract: "Sign an account in, or add a new one.",
         discussion: """
             Runs Claude Code's own sign-in beside the login your claude sessions use, so \
-            they carry on untouched. The sign-in page's link goes to your clipboard: over \
-            SSH, the clipboard of the machine your terminal runs on. Open it in any \
-            browser, sign in, and paste back the code the page ends on.
+            they carry on untouched. The sign-in page's link goes to your clipboard, and to \
+            the clipboard of the machine your terminal runs on when that's another one. \
+            Open it in any browser, sign in, and paste back the code the page ends on.
             """)
 
     @Argument(help: ArgumentHelp(
@@ -18,7 +18,7 @@ struct LoginCommand: AsyncParsableCommand {
         valueName: "account"))
     var account: String?
 
-    @Flag(help: "Open the sign-in page in this machine's browser instead of copying its link.")
+    @Flag(help: "Open the sign-in page in this machine's browser, where it finishes by itself, instead of copying its link.")
     var open = false
 
     func run() async throws {
@@ -74,21 +74,27 @@ struct LoginCommand: AsyncParsableCommand {
         throw ControlError.disconnected
     }
 
-    /// Hands the page over: opened or copied, and printed either way.
+    /// Hands the page over: opened with `--open`, otherwise copied, and printed
+    /// either way.
     private func present(_ pages: SignInPages) {
-        // Only the automatic page's address on this machine finishes by itself,
-        // so a browser anywhere else gets the one that ends on a code.
-        let isRemote = Terminal.isRemote
-        let url = isRemote ? pages.manual : pages.forThisMachine
-        let endsOnCode = isRemote || pages.automatic == nil
-
+        let url: URL
+        let endsOnCode: Bool
         print("")
-        if self.open, !isRemote, Browser.open(url) {
+        if self.open, !Terminal.isRemote, Browser.open(pages.forThisMachine) {
+            // Opened here, the automatic page's address is on this machine, so
+            // it can finish by itself.
+            url = pages.forThisMachine
+            endsOnCode = pages.automatic == nil
             print("Opened the sign-in page in your browser:")
         } else {
+            // A copied link gets the page that ends on a code, which a browser
+            // on any machine can finish: whoever copies it may be elsewhere
+            // without `Terminal.isRemote` knowing.
+            url = pages.manual
+            endsOnCode = true
             switch Clipboard.copy(url.absoluteString) {
             case .copied:
-                print("Copied the sign-in link. Paste it into any browser on this machine:")
+                print("Copied the sign-in link. Open it in any browser:")
             case .sentToTerminal:
                 let tmuxHint = ProcessInfo.processInfo.environment["TMUX"] == nil
                     ? "" : " (in tmux, that takes `set -g set-clipboard on`)"

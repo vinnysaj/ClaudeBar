@@ -55,7 +55,7 @@ claudebar config auto-switch on
 claudebar update
 ```
 
-`claudebar login` copies the sign-in link to your clipboard and prints it. Over SSH it goes to the clipboard of the machine your terminal runs on, through the terminal (OSC 52: iTerm2, Ghostty, kitty, WezTerm and Windows Terminal support it, Terminal.app doesn't; in tmux, `set -g set-clipboard on`). Open it in any browser, sign in, and paste the code the page ends on back into the terminal.
+`claudebar login` copies the sign-in link to your clipboard and prints it. It also sends it through the terminal to the clipboard of the machine your terminal runs on, so it reaches you over SSH or a remote terminal app (OSC 52: iTerm2, Ghostty, kitty, WezTerm and Windows Terminal support it, Terminal.app doesn't; in tmux, `set -g set-clipboard on`). Open it in any browser, sign in, and paste the code the page ends on back into the terminal.
 
 ## Development
 

@@ -4,6 +4,10 @@ import Foundation
 enum Terminal {
     /// The user is at another machine, over SSH, or this one has no screen: a
     /// browser here can't be used, and the local clipboard isn't theirs.
+    ///
+    /// It can't see every way in. A shell from a remote terminal app's own
+    /// server, or a tmux session started at this machine, has no SSH variables,
+    /// so false doesn't mean the user is here.
     static var isRemote: Bool {
         let environment = ProcessInfo.processInfo.environment
         if ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].contains(where: { environment[$0] != nil }) {
@@ -88,11 +92,15 @@ enum Clipboard {
         case failed
     }
 
+    /// Copies with this machine's clipboard tool unless the user is known to be
+    /// elsewhere, and sends it to the terminal either way: `Terminal.isRemote`
+    /// can miss a user at another machine, and the terminal's clipboard is
+    /// theirs wherever they are.
     static func copy(_ text: String) -> Result {
-        if !Terminal.isRemote, self.copyWithLocalTool(text) {
-            return .copied
-        }
-        return self.sendToTerminal(text) ? .sentToTerminal : .failed
+        let copiedHere = !Terminal.isRemote && self.copyWithLocalTool(text)
+        let sentToTerminal = self.sendToTerminal(text)
+        if copiedHere { return .copied }
+        return sentToTerminal ? .sentToTerminal : .failed
     }
 
     /// The OSC 52 escape, written straight to the terminal so it works with
