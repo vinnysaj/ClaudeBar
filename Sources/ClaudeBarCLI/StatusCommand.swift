@@ -89,17 +89,12 @@ struct StatusText {
             lines.append("   " + Style.yellow("Signed out. Sign it back in with `claudebar login \(number)`."))
             return lines
         }
-        guard let usage = display.usage else {
+        guard display.usage != nil else {
             lines.append("   " + Style.dim("No usage data yet"))
             return lines
         }
-        lines.append(self.metric(usage.session, label: "Session", limit: display.limits.session, stale: display.isStale))
-        lines.append(self.metric(usage.weekly, label: "Weekly", limit: display.limits.weekly, stale: display.isStale))
-        if let fable = usage.fable {
-            lines.append(self.metric(fable, label: fable.label, limit: nil, stale: display.isStale))
-        }
-        if let extra = usage.extraUsage {
-            lines.append(self.metric(extra, label: extra.label, limit: nil, stale: display.isStale))
+        for line in display.usageLines {
+            lines.append(self.metric(line.metric, limit: line.limit, stale: display.isStale))
         }
         if display.isActive, let outlook = ActiveOutlook(display: display, now: self.now) {
             lines.append("   " + (outlook.isNear ? Style.yellow(outlook.text) : Style.dim(outlook.text)))
@@ -107,9 +102,8 @@ struct StatusText {
         return lines
     }
 
-    private func metric(_ metric: UsageMetric?, label: String, limit: Int?, stale: Bool) -> String {
-        let name = label.padding(toLength: 12, withPad: " ", startingAt: 0)
-        guard let metric else { return "   \(name)" + Style.dim("--") }
+    private func metric(_ metric: UsageMetric, limit: Int?, stale: Bool) -> String {
+        let name = metric.label.padding(toLength: 12, withPad: " ", startingAt: 0)
         if metric.isUnlimited { return "   \(name)Unlimited" }
         let percent = metric.effectiveUsedPercent(at: self.now)
         let filled = min(Self.barWidth, max(0, Int((Double(percent) / 100 * Double(Self.barWidth)).rounded())))

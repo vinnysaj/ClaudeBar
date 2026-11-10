@@ -15,6 +15,9 @@ struct ConfigCommand: AsyncParsableCommand {
                   Default session limit: \(SettingsChange.list(UsageSettings.switchPercentChoices)).
               weekly-limit <percent>
                   Default weekly limit: \(SettingsChange.list(UsageSettings.weeklyPercentChoices)).
+              fable-limit <percent>|weekly
+                  Default Fable limit, the same choices, or weekly to follow each account's
+                  weekly limit. At it, the login moves to an account with Fable left.
               refresh-interval <minutes>
                   Time between usage fetches: \(SettingsChange.list(UsageSettings.refreshIntervalChoices.map { Int($0 / 60) })).
               work-days <days>
@@ -40,6 +43,7 @@ struct ConfigCommand: AsyncParsableCommand {
         case autoSwitch = "auto-switch"
         case sessionLimit = "session-limit"
         case weeklyLimit = "weekly-limit"
+        case fableLimit = "fable-limit"
         case refreshInterval = "refresh-interval"
         case workDays = "work-days"
         case workHours = "work-hours"
@@ -72,6 +76,7 @@ struct ConfigCommand: AsyncParsableCommand {
         print("auto-switch       \(settings.autoSwitchEnabled ? "on" : "off")")
         print("session-limit     \(settings.switchAtSessionPercent)%")
         print("weekly-limit      \(settings.switchAtWeeklyPercent)%")
+        print("fable-limit       \(settings.switchAtFablePercent.map { "\($0)%" } ?? "weekly")")
         print("refresh-interval  \(Int(settings.refreshInterval / 60)) minutes")
         print("work-days         \(days.isEmpty ? "none" : days)")
         print("work-hours        \(schedule.startHour)-\(schedule.endHour)")
@@ -92,6 +97,9 @@ struct ConfigCommand: AsyncParsableCommand {
             return .sessionLimit(try self.number(value, unit: "%"))
         case .weeklyLimit:
             return .weeklyLimit(try self.number(value, unit: "%"))
+        case .fableLimit:
+            if value.lowercased() == "weekly" { return .fableLimit(nil) }
+            return .fableLimit(try self.number(value, unit: "%"))
         case .refreshInterval:
             return .refreshInterval(TimeInterval(try self.number(value, unit: "m") * 60))
         case .workDays:

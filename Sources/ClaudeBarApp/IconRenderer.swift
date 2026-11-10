@@ -6,7 +6,7 @@ enum IconRenderer {
     private static let outputSize = NSSize(width: 18, height: 18)
     private static let scale = CGFloat(UsageIcon.size) / 18
 
-    static func makeIcon(sessionUsed: Double?, weeklyUsed: Double?, stale: Bool) -> NSImage {
+    static func makeIcon(_ paints: [UsageIcon.Paint]) -> NSImage {
         let image = NSImage(size: self.outputSize)
 
         guard let rep = NSBitmapImageRep(
@@ -33,7 +33,7 @@ enum IconRenderer {
             return image
         }
         NSGraphicsContext.current = context
-        for paint in UsageIcon.paints(sessionUsed: sessionUsed, weeklyUsed: weeklyUsed, stale: stale) {
+        for paint in paints {
             self.draw(paint, in: context.cgContext)
         }
         NSGraphicsContext.restoreGraphicsState()

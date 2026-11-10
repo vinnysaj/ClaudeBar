@@ -139,12 +139,26 @@ actor AccountManager {
     }
 
     /// How hard the user is working on the active account right now relative to
-    /// its typical pace; nil without recent readings to judge by.
+    /// its typical pace; nil without recent readings to judge by. Measured on the
+    /// session, which moves fastest, or on the week when the session gives no
+    /// reading, as on an account without a session limit.
     private func currentIntensity(pace: PaceModel, now: Date) -> Double? {
         guard let activeId = self.state.activeAccountUuid,
-              let current = self.history.currentPace(for: activeId, at: now)?.sessionPerHour
+              let currentPace = self.history.currentPace(for: activeId, at: now)
         else { return nil }
-        guard let typical = pace.typicalPace(for: activeId)?.pace.sessionPerActiveHour, typical > 0 else {
+        let typicalPace = pace.typicalPace(for: activeId)?.pace
+        let current: Double
+        let typical: Double?
+        if let session = currentPace.sessionPerHour {
+            current = session
+            typical = typicalPace?.sessionPerActiveHour
+        } else if let weekly = currentPace.weeklyPerHour {
+            current = weekly
+            typical = typicalPace?.weeklyPerActiveHour
+        } else {
+            return nil
+        }
+        guard let typical, typical > 0 else {
             // Without a typical pace to compare against, all that's known is
             // whether work is happening.
             return current > 0 ? 1 : 0
@@ -636,9 +650,12 @@ actor AccountManager {
         case .noCandidate(let reason):
             let activeEmail = self.state.accounts.first { $0.id == self.state.activeAccountUuid }?.email
                 ?? "The active account"
+            let elsewhere = reason.window == .fable
+                ? "no other account has Fable room under its limits"
+                : "no other account has room under its limits"
             self.infoBanner = Banner(
                 kind: .warning,
-                message: "\(activeEmail) \(reason), but no other account has room under its limits. Staying put.")
+                message: "\(activeEmail) \(reason), but \(elsewhere). Staying put.")
             self.infoBannerExpiresAt = Date().addingTimeInterval(5 * 60)
         case .switchTo(let accountId, let reason):
             self.logger.info("Auto-switching: \(reason.description, privacy: .public)")

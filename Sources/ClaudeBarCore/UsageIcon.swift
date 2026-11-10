@@ -1,9 +1,11 @@
 import Foundation
 
-/// The menu bar icon: the active account's session bar, drawn as a crab with
-/// arms, legs and eyes, above its weekly bar, each filled to its usage. Laid out
-/// as paint operations on a 36-pixel square with y running up, which the Mac
-/// renders with AppKit and the Linux tray as SVG.
+/// The menu bar icon: the first two limit windows the active account reports,
+/// each a bar filled to its usage. The top bar is drawn as a crab with arms,
+/// legs and eyes. That's session over weekly, or for an account without a
+/// session limit, weekly over Fable. Laid out as paint operations on a 36-pixel
+/// square with y running up, which the Mac renders with AppKit and the Linux
+/// tray as SVG.
 public enum UsageIcon {
     public static let size = 36
 
@@ -30,24 +32,28 @@ public enum UsageIcon {
         case clear(Rect)
     }
 
-    /// Nil usage draws an empty bar; `stale` dims everything.
-    public static func paints(sessionUsed: Double?, weeklyUsed: Double?, stale: Bool) -> [Paint] {
+    /// Nil usage, or a second window the account doesn't have, draws an empty
+    /// bar; `stale` dims everything.
+    public static func paints(usage: AccountUsage?, stale: Bool, now: Date) -> [Paint] {
+        let windows = usage?.limitWindows.map { Double($0.effectiveUsedPercent(at: now)) } ?? []
+        let topUsed = windows.first
+        let bottomUsed = windows.dropFirst().first
         let trackFillOpacity = stale ? 0.18 : 0.28
         let trackStrokeOpacity = stale ? 0.28 : 0.44
         let fillOpacity = stale ? 0.55 : 1.0
         let barWidth = 30
         let barX = (self.size - barWidth) / 2
 
-        let session = self.bar(
-            Rect(x: barX, y: 19, width: barWidth, height: 12), cornerRadius: 0, fillPercent: sessionUsed,
+        let top = self.bar(
+            Rect(x: barX, y: 19, width: barWidth, height: 12), cornerRadius: 0, fillPercent: topUsed,
             fillOpacity: fillOpacity, trackFillOpacity: trackFillOpacity, trackStrokeOpacity: trackStrokeOpacity)
-        let weeklyOpacity = weeklyUsed != nil ? 1.0 : 0.45
-        let weekly = self.bar(
-            Rect(x: barX, y: 5, width: barWidth, height: 8), cornerRadius: 4, fillPercent: weeklyUsed,
-            fillOpacity: fillOpacity, trackFillOpacity: trackFillOpacity * weeklyOpacity,
-            trackStrokeOpacity: trackStrokeOpacity * weeklyOpacity)
-        return session + self.crab(around: Rect(x: barX, y: 19, width: barWidth, height: 12), opacity: fillOpacity)
-            + weekly
+        let bottomOpacity = bottomUsed != nil ? 1.0 : 0.45
+        let bottom = self.bar(
+            Rect(x: barX, y: 5, width: barWidth, height: 8), cornerRadius: 4, fillPercent: bottomUsed,
+            fillOpacity: fillOpacity, trackFillOpacity: trackFillOpacity * bottomOpacity,
+            trackStrokeOpacity: trackStrokeOpacity * bottomOpacity)
+        return top + self.crab(around: Rect(x: barX, y: 19, width: barWidth, height: 12), opacity: fillOpacity)
+            + bottom
     }
 
     private static func bar(

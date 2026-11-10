@@ -69,7 +69,8 @@ public enum UsageForecaster {
     /// Room this close to zero counts as full; floating-point sums rarely land exactly.
     private static let epsilon = 1e-6
 
-    /// One account's state as the simulation advances.
+    /// One account's state as the simulation advances. Fable isn't simulated:
+    /// its limit stops Fable work, not work, which carries on in other models.
     public struct Account: Sendable, Equatable {
         public let id: String
         public var sessionPercent: Double
@@ -93,6 +94,7 @@ public enum UsageForecaster {
                 id: self.id,
                 sessionPercent: self.sessionPercent,
                 weeklyPercent: self.weeklyPercent,
+                fablePercent: 0,
                 weeklyResetsAt: self.weeklyResetsAt,
                 limits: self.limits,
                 isAvailable: self.isAvailable,

@@ -215,8 +215,26 @@ struct SettingsView: View {
                     .labelsHidden()
                     .frame(width: 72)
                 }
+                GridRow {
+                    Text("Default Fable limit:")
+                        .font(.system(size: 12))
+                    Picker("Default Fable limit", selection: self.$usage.switchAtFablePercent) {
+                        Text("Same as weekly").tag(Int?.none)
+                        Divider()
+                        let saved = self.usage.switchAtFablePercent ?? UsageSettings.weeklyPercentChoices[0]
+                        ForEach(Self.choices(UsageSettings.weeklyPercentChoices, including: saved), id: \.self) { percent in
+                            Text("\(percent)%").tag(Int?.some(percent))
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
-            Text("An account stops taking work at either limit: the login moves to the \"Next\" account, the one with room under both of its limits whose weekly window resets soonest. If none has room, the login stays put. Running claude sessions pick up a new account within seconds.")
+            Text("An account stops taking work at its session or weekly limit: the login moves to the \"Next\" account, the one with room under both whose weekly window resets soonest. If none has room, the login stays put. Running claude sessions pick up a new account within seconds.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Accounts with Fable left come first, so a long Fable run moves from one account's Fable to the next. At its Fable limit an account hands over only to one with Fable left; once every account's Fable is spent, switching goes by the other limits alone.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

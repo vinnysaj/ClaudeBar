@@ -38,13 +38,6 @@ public struct TypicalPace: Sendable, Codable, Equatable {
     public let weeklyPerActiveHour: Double
     /// Hours of active work the pace was measured over.
     public let activeHours: Double
-
-    public func perActiveHour(_ window: UsageWindow) -> Double {
-        switch window {
-        case .session: return self.sessionPerActiveHour
-        case .weekly: return self.weeklyPerActiveHour
-        }
-    }
 }
 
 /// What the usage history says about the user's rhythm and each account's burn

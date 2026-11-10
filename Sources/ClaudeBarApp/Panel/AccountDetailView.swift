@@ -86,15 +86,10 @@ struct AccountDetailView: View {
 
     @ViewBuilder
     private func usageSection(_ display: AccountDisplay, now: Date) -> some View {
-        if let usage = display.usage {
+        if display.usage != nil {
             VStack(alignment: .leading, spacing: 8) {
-                DetailMetricRow(label: "Session", metric: usage.session, limit: display.limits.session, now: now)
-                DetailMetricRow(label: "Weekly", metric: usage.weekly, limit: display.limits.weekly, now: now)
-                if let fable = usage.fable {
-                    DetailMetricRow(label: fable.label, metric: fable, limit: nil, now: now)
-                }
-                if let extra = usage.extraUsage {
-                    DetailMetricRow(label: extra.label, metric: extra, limit: nil, now: now)
+                ForEach(display.usageLines, id: \.metric.label) { line in
+                    DetailMetricRow(line: line, now: now)
                 }
             }
         } else {
@@ -109,27 +104,32 @@ struct AccountDetailView: View {
     private func paceSection(_ display: AccountDisplay) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionTitle(text: "Pace")
-            DetailLine(label: "Right now", value: Self.currentPaceText(display.insight?.currentPace))
-            DetailLine(label: "Typically", value: Self.typicalPaceText(display.insight))
+            DetailLine(label: "Right now", value: Self.currentPaceText(display.insight?.currentPace, usage: display.usage))
+            DetailLine(label: "Typically", value: Self.typicalPaceText(display.insight, usage: display.usage))
         }
     }
 
-    private static func currentPaceText(_ pace: CurrentPace?) -> String {
-        guard let pace, pace.sessionPerHour != nil || pace.weeklyPerHour != nil else {
-            return "Not enough recent readings"
-        }
-        let session = max(0, pace.sessionPerHour ?? 0)
-        let weekly = max(0, pace.weeklyPerHour ?? 0)
-        guard session > 0 || weekly > 0 else { return "Idle for the last half hour" }
-        return "\(Formatting.rate(session)) session \u{00B7} \(Formatting.rate(weekly)) weekly"
+    /// Each window the account reports, at the pace it's climbing.
+    private static func currentPaceText(_ pace: CurrentPace?, usage: AccountUsage?) -> String {
+        let rates: [(name: String, perHour: Double?)] = [
+            usage?.session.map { _ in ("session", pace?.sessionPerHour) },
+            ("weekly", pace?.weeklyPerHour),
+            usage?.fable.map { ($0.label, pace?.fablePerHour) },
+        ].compactMap { $0 }
+        let known = rates.compactMap { rate in rate.perHour.map { (rate.name, max(0, $0)) } }
+        guard !known.isEmpty else { return "Not enough recent readings" }
+        guard known.contains(where: { $0.1 > 0 }) else { return "Idle for the last half hour" }
+        return known.map { "\(Formatting.rate($0.1)) \($0.0)" }.joined(separator: " \u{00B7} ")
     }
 
-    private static func typicalPaceText(_ insight: AccountInsight?) -> String {
+    private static func typicalPaceText(_ insight: AccountInsight?, usage: AccountUsage?) -> String {
         guard let pace = insight?.typicalPace else {
             return "Learning; needs about an hour of work"
         }
         let source = insight?.isPacePooled == true ? " (all accounts)" : ""
-        return "\(Formatting.rate(pace.sessionPerActiveHour)) session \u{00B7} \(Formatting.rate(pace.weeklyPerActiveHour)) weekly per working hour\(source)"
+        let weekly = "\(Formatting.rate(pace.weeklyPerActiveHour)) weekly per working hour\(source)"
+        guard usage?.session != nil else { return weekly }
+        return "\(Formatting.rate(pace.sessionPerActiveHour)) session \u{00B7} \(weekly)"
     }
 
     // MARK: - Forecast
@@ -140,9 +140,11 @@ struct AccountDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 SectionTitle(text: display.isActive ? "If you keep working here" : "If you worked here")
                 if let forecast = display.insight?.forecast {
-                    DetailLine(
-                        label: "Session",
-                        value: Self.sessionOutlook(usage.session, limit: display.limits.session, forecast: forecast, now: now))
+                    if let session = usage.session {
+                        DetailLine(
+                            label: "Session",
+                            value: Self.sessionOutlook(session, limit: display.limits.session, forecast: forecast, now: now))
+                    }
                     DetailLine(
                         label: "Weekly",
                         value: Self.weeklyOutlook(usage.weekly, limit: display.limits.weekly, forecast: forecast, now: now))
@@ -172,15 +174,15 @@ struct AccountDetailView: View {
     }
 
     private static func sessionOutlook(
-        _ metric: UsageMetric?, limit: Int, forecast: AccountForecast, now: Date) -> String
+        _ metric: UsageMetric, limit: Int, forecast: AccountForecast, now: Date) -> String
     {
-        if let metric, metric.effectiveUsedPercent(at: now) >= limit {
+        if metric.effectiveUsedPercent(at: now) >= limit {
             return "At its \(limit)% limit"
         }
         if let limitAt = forecast.sessionLimitAt {
             return "Reaches \(limit)% ~\(Formatting.approximateMoment(limitAt, now: now)) (in \(Formatting.duration(limitAt.timeIntervalSince(now))))"
         }
-        if let percent = forecast.sessionPercentAtReset, let resetsAt = metric?.resetsAt, resetsAt > now {
+        if let percent = forecast.sessionPercentAtReset, let resetsAt = metric.resetsAt, resetsAt > now {
             return "~\(Int(percent.rounded()))% by its \(Formatting.moment(resetsAt, now: now)) reset"
         }
         return "No session open"
@@ -206,14 +208,18 @@ struct AccountDetailView: View {
     private func limitsSection(_ display: AccountDisplay) -> some View {
         let preferences = display.account.preferences
         let defaults = self.model.usageSettings
+        // A window the account is known not to have has no limit worth setting.
+        let usage = display.usage
         return VStack(alignment: .leading, spacing: 6) {
             SectionTitle(text: "Limits")
-            LimitStepper(
-                title: "Session",
-                value: preferences.sessionLimit,
-                defaultValue: defaults.switchAtSessionPercent)
-            { newValue in
-                self.update(display) { $0.sessionLimit = newValue }
+            if usage == nil || usage?.session != nil {
+                LimitStepper(
+                    title: "Session",
+                    value: preferences.sessionLimit,
+                    defaultValue: defaults.switchAtSessionPercent)
+                { newValue in
+                    self.update(display) { $0.sessionLimit = newValue }
+                }
             }
             LimitStepper(
                 title: "Weekly",
@@ -222,12 +228,21 @@ struct AccountDetailView: View {
             { newValue in
                 self.update(display) { $0.weeklyLimit = newValue }
             }
+            if usage == nil || usage?.fable != nil {
+                LimitStepper(
+                    title: usage?.fable?.label ?? "Fable",
+                    value: preferences.fableLimit,
+                    defaultValue: defaults.defaultFableLimit(for: preferences))
+                { newValue in
+                    self.update(display) { $0.fableLimit = newValue }
+                }
+            }
             Toggle("Use for automatic switching", isOn: Binding(
                 get: { preferences.allowsAutoSwitch },
                 set: { isOn in self.update(display) { $0.allowsAutoSwitch = isOn } }))
                 .toggleStyle(.checkbox)
                 .font(.system(size: 11))
-            Text("Auto-switching moves off this account at either limit and won't move onto it near one. Whatever is left above a limit stays free for claude.ai.")
+            Text("Auto-switching moves off this account at its session or weekly limit and won't move onto it near one. At its Fable limit, it moves to an account with Fable left. Whatever is left above a limit stays free for claude.ai.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -287,20 +302,26 @@ private struct LimitStepper: View {
 
 /// One limit window: its bar with the limit marked, then the figures.
 private struct DetailMetricRow: View {
-    let label: String
-    let metric: UsageMetric?
-    let limit: Int?
+    let line: UsageLine
     let now: Date
+
+    private var metric: UsageMetric { self.line.metric }
+    private var limit: Int? { self.line.limit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(self.label)
+                Text(self.metric.label)
                     .font(.system(size: 11))
                     .frame(width: 58, alignment: .leading)
                     .lineLimit(1)
-                if let metric = self.metric, !metric.isUnlimited {
-                    let percent = metric.effectiveUsedPercent(at: self.now)
+                if self.metric.isUnlimited {
+                    Text("Unlimited")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                } else {
+                    let percent = self.metric.effectiveUsedPercent(at: self.now)
                     UsageProgressBar(
                         percent: percent,
                         limit: self.limit,
@@ -309,11 +330,6 @@ private struct DetailMetricRow: View {
                         .font(.system(size: 11, weight: .medium))
                         .monospacedDigit()
                         .frame(width: 36, alignment: .trailing)
-                } else {
-                    Text(self.metric?.isUnlimited == true ? "Unlimited" : "--")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
                 }
             }
             let caption = self.caption
@@ -331,9 +347,9 @@ private struct DetailMetricRow: View {
         if let limit = self.limit {
             parts.append("Limit \(limit)%")
         }
-        if let spent = self.metric?.spentDescription {
+        if let spent = self.metric.spentDescription {
             parts.append(spent)
-        } else if let resetsAt = self.metric?.resetsAt {
+        } else if let resetsAt = self.metric.resetsAt {
             parts.append(Formatting.resetDescription(from: resetsAt))
         }
         return parts.joined(separator: " \u{00B7} ")

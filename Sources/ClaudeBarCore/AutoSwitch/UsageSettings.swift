@@ -11,6 +11,9 @@ public struct UsageSettings: Sendable, Codable, Equatable {
     public var switchAtSessionPercent: Int
     /// Weekly usage, in percent, at which an account stops taking work.
     public var switchAtWeeklyPercent: Int
+    /// Fable usage, in percent, at which an account stops taking Fable work; nil
+    /// holds each account's Fable to its weekly limit.
+    public var switchAtFablePercent: Int?
     /// When the user usually works; forecasts lean on it where history is thin.
     public var workSchedule: WorkSchedule
 
@@ -19,6 +22,7 @@ public struct UsageSettings: Sendable, Codable, Equatable {
         autoSwitchEnabled: false,
         switchAtSessionPercent: 90,
         switchAtWeeklyPercent: 95,
+        switchAtFablePercent: nil,
         workSchedule: .default)
 
     public static let refreshIntervalChoices: [TimeInterval] = [60, 2 * 60, 5 * 60, 10 * 60, 15 * 60]
@@ -29,7 +33,14 @@ public struct UsageSettings: Sendable, Codable, Equatable {
     public func limits(for preferences: AccountPreferences) -> AccountLimits {
         AccountLimits(
             session: preferences.sessionLimit ?? self.switchAtSessionPercent,
-            weekly: preferences.weeklyLimit ?? self.switchAtWeeklyPercent)
+            weekly: preferences.weeklyLimit ?? self.switchAtWeeklyPercent,
+            fable: preferences.fableLimit ?? self.defaultFableLimit(for: preferences))
+    }
+
+    /// The Fable limit an account follows until it sets its own: the default
+    /// Fable limit, or without one, wherever the account's weekly limit is.
+    public func defaultFableLimit(for preferences: AccountPreferences) -> Int {
+        self.switchAtFablePercent ?? preferences.weeklyLimit ?? self.switchAtWeeklyPercent
     }
 
     private static let defaultsKey = "usageSettings"
@@ -51,6 +62,7 @@ extension UsageSettings {
         self.switchAtSessionPercent = try container.decode(Int.self, forKey: .switchAtSessionPercent)
         self.switchAtWeeklyPercent = try container.decodeIfPresent(Int.self, forKey: .switchAtWeeklyPercent)
             ?? fallback.switchAtWeeklyPercent
+        self.switchAtFablePercent = try container.decodeIfPresent(Int.self, forKey: .switchAtFablePercent)
         self.workSchedule = try container.decodeIfPresent(WorkSchedule.self, forKey: .workSchedule)
             ?? fallback.workSchedule
     }

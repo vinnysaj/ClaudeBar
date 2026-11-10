@@ -58,8 +58,9 @@ struct LimitsCommand: AsyncParsableCommand {
         commandName: "limits",
         abstract: "Show or set the limits one account is held to.",
         discussion: """
-            An account stops taking work at either limit, and auto-switching moves the login \
-            to the next account. A weekly limit below 100% keeps the rest for claude.ai. \
+            An account stops taking work at its session or weekly limit, and auto-switching \
+            moves the login to the next account. At its Fable limit, the login moves to an \
+            account with Fable left. A weekly limit below 100% keeps the rest for claude.ai. \
             Without options, shows the account's limits.
             """)
 
@@ -72,6 +73,9 @@ struct LimitsCommand: AsyncParsableCommand {
     @Option(help: ArgumentHelp("Weekly percent to stop at, or `default`.", valueName: "percent"))
     var weekly: LimitValue?
 
+    @Option(help: ArgumentHelp("Fable percent to stop Fable work at, or `default`.", valueName: "percent"))
+    var fable: LimitValue?
+
     @Option(name: .customLong("auto-switch"), help: ArgumentHelp("Whether auto-switching may move the login onto this account.", valueName: "on|off"))
     var autoSwitch: Toggle?
 
@@ -79,6 +83,7 @@ struct LimitsCommand: AsyncParsableCommand {
         let changes: [AccountChange] = [
             self.session.map { .sessionLimit($0.percent) },
             self.weekly.map { .weeklyLimit($0.percent) },
+            self.fable.map { .fableLimit($0.percent) },
             self.autoSwitch.map { .allowsAutoSwitch($0.isOn) },
         ].compactMap { $0 }
 
@@ -92,6 +97,7 @@ struct LimitsCommand: AsyncParsableCommand {
         print(current.account.email)
         print("  Session limit  \(current.limits.session)%" + (preferences.sessionLimit == nil ? " (default)" : ""))
         print("  Weekly limit   \(current.limits.weekly)%" + (preferences.weeklyLimit == nil ? " (default)" : ""))
+        print("  Fable limit    \(current.limits.fable)%" + (preferences.fableLimit == nil ? " (default)" : ""))
         print("  Auto-switch    \(preferences.allowsAutoSwitch ? "may switch to it" : "never switches to it")")
     }
 

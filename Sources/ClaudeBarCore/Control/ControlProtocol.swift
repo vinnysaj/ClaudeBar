@@ -58,6 +58,7 @@ public enum AccountChange: Sendable, Codable {
     /// A percent from `AccountLimits.choices`, or nil to follow the default.
     case sessionLimit(Int?)
     case weeklyLimit(Int?)
+    case fableLimit(Int?)
     case allowsAutoSwitch(Bool)
 
     public func applied(to preferences: AccountPreferences) throws -> AccountPreferences {
@@ -69,6 +70,9 @@ public enum AccountChange: Sendable, Codable {
         case .weeklyLimit(let percent):
             try Self.check(percent, allowed: AccountLimits.choices)
             preferences.weeklyLimit = percent
+        case .fableLimit(let percent):
+            try Self.check(percent, allowed: AccountLimits.choices)
+            preferences.fableLimit = percent
         case .allowsAutoSwitch(let allows):
             preferences.allowsAutoSwitch = allows
         }
@@ -86,6 +90,8 @@ public enum SettingsChange: Sendable, Codable {
     case autoSwitch(Bool)
     case sessionLimit(Int)
     case weeklyLimit(Int)
+    /// Nil holds each account's Fable to its weekly limit.
+    case fableLimit(Int?)
     case refreshInterval(TimeInterval)
     case workdays(Set<Weekday>)
     /// The working day, from `start` up to `end`, in hours 0-24.
@@ -106,6 +112,11 @@ public enum SettingsChange: Sendable, Codable {
         case .weeklyLimit(let percent):
             try Self.check(percent, allowed: UsageSettings.weeklyPercentChoices, what: "The default weekly limit")
             settings.switchAtWeeklyPercent = percent
+        case .fableLimit(let percent):
+            if let percent {
+                try Self.check(percent, allowed: UsageSettings.weeklyPercentChoices, what: "The default Fable limit")
+            }
+            settings.switchAtFablePercent = percent
         case .refreshInterval(let interval):
             guard UsageSettings.refreshIntervalChoices.contains(interval) else {
                 let minutes = UsageSettings.refreshIntervalChoices.map { Int($0 / 60) }

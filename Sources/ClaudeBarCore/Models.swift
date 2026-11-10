@@ -141,17 +141,23 @@ public struct AccountPreferences: Sendable, Codable, Equatable {
     /// Weekly percent this account stops taking work at; nil follows the global
     /// default. Setting it below 100 keeps the rest in reserve, e.g. for claude.ai.
     public var weeklyLimit: Int?
+    /// Fable percent this account stops taking Fable work at; nil follows the
+    /// global default, which follows the weekly limit unless set.
+    public var fableLimit: Int?
     /// Whether auto-switching may move the login onto this account.
     public var allowsAutoSwitch: Bool
 
-    public static let `default` = AccountPreferences(sessionLimit: nil, weeklyLimit: nil, allowsAutoSwitch: true)
+    public static let `default` = AccountPreferences(
+        sessionLimit: nil, weeklyLimit: nil, fableLimit: nil, allowsAutoSwitch: true)
 }
 
 /// The usage, in percent, an account takes work up to. Auto-switching moves the
-/// login off an account at either limit and never onto one near them.
+/// login off an account at its session or weekly limit and never onto one near
+/// them. At its Fable limit the login moves only to an account with Fable left.
 public struct AccountLimits: Sendable, Codable, Equatable {
     public let session: Int
     public let weekly: Int
+    public let fable: Int
 
     /// Every percent a limit can be set to: steps of 5, then each point from 95 to 100.
     public static let choices = Array(stride(from: 10, to: 95, by: 5)) + Array(95...100)
@@ -160,13 +166,6 @@ public struct AccountLimits: Sendable, Codable, Equatable {
     /// between choices, which older builds could save, steps to the nearest one that way.
     public static func choice(steppingFrom percent: Int, up: Bool) -> Int? {
         up ? Self.choices.first { $0 > percent } : Self.choices.last { $0 < percent }
-    }
-
-    public func percent(_ window: UsageWindow) -> Int {
-        switch window {
-        case .session: return self.session
-        case .weekly: return self.weekly
-        }
     }
 }
 
@@ -185,14 +184,27 @@ public struct AccountUsage: Sendable, Codable {
     public var extraUsage: UsageMetric?
     public var fetchedAt: Date
 
+    /// The limit windows the account reports, session first. Verified accounts
+    /// have no session window, and accounts without Fable no Fable window.
+    public var limitWindows: [UsageMetric] {
+        [self.session, self.weekly, self.fable].compactMap { $0 }
+    }
+
     /// A limit window rolled over after this was fetched, so its cached figures
     /// are wrong no matter how recent the fetch.
     public func hasWindowResetSinceFetch(now: Date) -> Bool {
-        [self.session, self.weekly, self.fable].contains { metric in
-            guard let resetsAt = metric?.resetsAt else { return false }
+        self.limitWindows.contains { metric in
+            guard let resetsAt = metric.resetsAt else { return false }
             return resetsAt > self.fetchedAt && resetsAt <= now
         }
     }
+}
+
+/// One usage figure as every view lists it, with the limit the account is held to there.
+public struct UsageLine: Sendable {
+    public let metric: UsageMetric
+    /// Nil for a figure no limit watches.
+    public let limit: Int?
 }
 
 /// Persisted usage cache (Caches/ClaudeBar/usage-cache-v2.json).
@@ -216,6 +228,18 @@ public struct AccountDisplay: Sendable, Codable, Identifiable {
     public var insight: AccountInsight?
 
     public var id: String { self.account.id }
+
+    /// The usage this account reports, in the order every view lists it. A
+    /// window the API leaves out gets no line rather than an empty one.
+    public var usageLines: [UsageLine] {
+        guard let usage = self.usage else { return [] }
+        return [
+            usage.session.map { UsageLine(metric: $0, limit: self.limits.session) },
+            usage.weekly.map { UsageLine(metric: $0, limit: self.limits.weekly) },
+            usage.fable.map { UsageLine(metric: $0, limit: self.limits.fable) },
+            usage.extraUsage.map { UsageLine(metric: $0, limit: nil) },
+        ].compactMap { $0 }
+    }
 }
 
 /// What the usage history says about one account.
@@ -248,18 +272,32 @@ public enum SwitchReason: Sendable, Equatable, CustomStringConvertible {
     /// Usage would cross the limit before the next check.
     case sessionClimbing(percent: Int, limit: Int)
     case weeklyClimbing(percent: Int, limit: Int)
+    case fableAtLimit(percent: Int, limit: Int)
+    case fableClimbing(percent: Int, limit: Int)
+
+    /// The window at or nearing its limit.
+    public var window: UsageWindow {
+        switch self {
+        case .sessionAtLimit, .sessionClimbing: return .session
+        case .weeklyAtLimit, .weeklyClimbing: return .weekly
+        case .fableAtLimit, .fableClimbing: return .fable
+        }
+    }
 
     /// Completes a sentence that starts with the account's email.
     public var description: String {
+        let name = switch self.window {
+        case .session: "session"
+        case .weekly: "weekly"
+        case .fable: "Fable"
+        }
         switch self {
-        case .sessionAtLimit(let percent, let limit):
-            return "reached its \(limit)% session limit (at \(percent)%)"
-        case .weeklyAtLimit(let percent, let limit):
-            return "reached its \(limit)% weekly limit (at \(percent)%)"
-        case .sessionClimbing(let percent, let limit):
-            return "was about to reach its \(limit)% session limit (at \(percent)% and climbing)"
-        case .weeklyClimbing(let percent, let limit):
-            return "was about to reach its \(limit)% weekly limit (at \(percent)% and climbing)"
+        case .sessionAtLimit(let percent, let limit), .weeklyAtLimit(let percent, let limit),
+             .fableAtLimit(let percent, let limit):
+            return "reached its \(limit)% \(name) limit (at \(percent)%)"
+        case .sessionClimbing(let percent, let limit), .weeklyClimbing(let percent, let limit),
+             .fableClimbing(let percent, let limit):
+            return "was about to reach its \(limit)% \(name) limit (at \(percent)% and climbing)"
         }
     }
 }

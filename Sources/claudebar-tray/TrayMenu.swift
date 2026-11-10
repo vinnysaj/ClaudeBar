@@ -140,9 +140,9 @@ enum TrayMenu {
         if account.needsRelogin {
             label += "  ·  signed out"
         } else if let usage = display.usage {
-            let session = usage.session?.effectiveUsedPercent(at: now) ?? 0
-            let weekly = usage.weekly?.effectiveUsedPercent(at: now) ?? 0
-            label += "  ·  \(session)% session, \(weekly)% weekly"
+            // The two windows the menu bar icon shows.
+            let windows = usage.limitWindows.prefix(2).map { "\($0.label) \($0.effectiveUsedPercent(at: now))%" }
+            label += "  ·  " + windows.joined(separator: ", ")
         }
         if count > 1, !display.isActive, display.isRecommended {
             label += "  ·  next"
@@ -150,14 +150,8 @@ enum TrayMenu {
 
         var details: [MenuEntry] = []
         if let usage = display.usage, !account.needsRelogin {
-            let metrics: [(UsageMetric?, String, Int?)] = [
-                (usage.session, "Session", display.limits.session),
-                (usage.weekly, "Weekly", display.limits.weekly),
-                (usage.fable, usage.fable?.label ?? "", nil),
-                (usage.extraUsage, usage.extraUsage?.label ?? "", nil),
-            ]
-            for case let (metric?, name, limit) in metrics {
-                details.append(.text(self.metric(metric, name: name, limit: limit, now: now)))
+            for line in display.usageLines {
+                details.append(.text(self.metric(line.metric, limit: line.limit, now: now)))
             }
             if display.isStale {
                 details.append(.text("Last fetched \(Formatting.timeAgo(from: usage.fetchedAt))"))
@@ -181,9 +175,9 @@ enum TrayMenu {
         return MenuEntry(label: label, kind: .submenu(details), action: nil)
     }
 
-    private static func metric(_ metric: UsageMetric, name: String, limit: Int?, now: Date) -> String {
-        if metric.isUnlimited { return "\(name): unlimited" }
-        var parts = ["\(name) \(metric.effectiveUsedPercent(at: now))%"]
+    private static func metric(_ metric: UsageMetric, limit: Int?, now: Date) -> String {
+        if metric.isUnlimited { return "\(metric.label): unlimited" }
+        var parts = ["\(metric.label) \(metric.effectiveUsedPercent(at: now))%"]
         if let limit, limit < 100 {
             parts.append("limit \(limit)%")
         }

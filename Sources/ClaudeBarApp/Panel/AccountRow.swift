@@ -76,7 +76,9 @@ struct AccountRow: View {
                 }
                 DisclosureChevron()
             }
-            // Fixed-height body so a refresh mid-open never shifts rows below.
+            // Fixed-height body for the first two lines, so a refresh mid-open
+            // never shifts rows below.
+            let lines = display.usageLines
             Group {
                 if display.account.needsRelogin {
                     HStack(spacing: 4) {
@@ -88,14 +90,11 @@ struct AccountRow: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
-                } else if let usage = display.usage {
+                } else if display.usage != nil {
                     VStack(alignment: .leading, spacing: 4) {
-                        CompactMetricLine(
-                            metric: usage.session, fallbackLabel: "Session",
-                            limit: display.limits.session, stale: display.isStale)
-                        CompactMetricLine(
-                            metric: usage.weekly, fallbackLabel: "Weekly",
-                            limit: display.limits.weekly, stale: display.isStale)
+                        ForEach(lines.prefix(2), id: \.metric.label) { line in
+                            CompactMetricLine(line: line, stale: display.isStale)
+                        }
                     }
                 } else {
                     Text("No usage data yet")
@@ -105,12 +104,9 @@ struct AccountRow: View {
             }
             .frame(height: 32, alignment: .center)
 
-            if let usage = display.usage, !display.account.needsRelogin {
-                if let fable = usage.fable {
-                    CompactMetricLine(metric: fable, fallbackLabel: fable.label, limit: nil, stale: display.isStale)
-                }
-                if let extra = usage.extraUsage {
-                    CompactMetricLine(metric: extra, fallbackLabel: extra.label, limit: nil, stale: display.isStale)
+            if !display.account.needsRelogin {
+                ForEach(lines.dropFirst(2), id: \.metric.label) { line in
+                    CompactMetricLine(line: line, stale: display.isStale)
                 }
             }
             if display.isActive, let outlook = ActiveOutlook(display: display, now: Date()) {
@@ -157,30 +153,29 @@ struct BadgeView: View {
 }
 
 struct CompactMetricLine: View {
-    let metric: UsageMetric?
-    let fallbackLabel: String
-    /// Drawn as a tick on the bar; nil for windows auto-switching doesn't watch.
-    let limit: Int?
+    /// Its limit is drawn as a tick on the bar; none for figures auto-switching doesn't watch.
+    let line: UsageLine
     let stale: Bool
 
     var body: some View {
+        let metric = self.line.metric
         HStack(spacing: 6) {
-            Text(self.metric?.label ?? self.fallbackLabel)
+            Text(metric.label)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .frame(width: 66, alignment: .leading)
                 .lineLimit(1)
-            if let metric, metric.isUnlimited {
+            if metric.isUnlimited {
                 Text("Unlimited")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()
-            } else if let metric {
+            } else {
                 let percent = metric.effectiveUsedPercent(at: Date())
                 UsageProgressBar(
                     percent: percent,
-                    limit: self.limit,
-                    tintColor: UsageColors.bar(percent: percent, limit: self.limit))
+                    limit: self.line.limit,
+                    tintColor: UsageColors.bar(percent: percent, limit: self.line.limit))
                     .frame(height: 5)
                     .opacity(self.stale ? 0.5 : 1)
                 Text("\(percent)%")
@@ -193,15 +188,6 @@ struct CompactMetricLine: View {
                     .foregroundStyle(.tertiary)
                     .frame(width: 110, alignment: .trailing)
                     .lineLimit(1)
-            } else {
-                UsageProgressBar(percent: 0, limit: nil, tintColor: .clear)
-                    .frame(height: 5)
-                Text("--")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 32, alignment: .trailing)
-                Text("")
-                    .frame(width: 110)
             }
         }
     }

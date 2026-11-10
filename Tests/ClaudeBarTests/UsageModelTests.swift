@@ -80,3 +80,42 @@ struct LimitStepTests {
         #expect(AccountLimits.choice(steppingFrom: percent, up: up) == expected)
     }
 }
+
+@Suite("Fable limit")
+struct FableLimitTests {
+    @Test(
+        "Fable follows the account's own limit, then the default, then the account's weekly limit",
+        arguments: [
+            (accountFable: nil, accountWeekly: nil, defaultFable: nil, expected: 95),
+            (nil, 80, nil, 80),
+            (nil, 80, 90, 90),
+            (70, 80, 90, 70),
+        ] as [(Int?, Int?, Int?, Int)])
+    func fableLimitResolution(accountFable: Int?, accountWeekly: Int?, defaultFable: Int?, expected: Int) {
+        var settings = UsageFixture.settings()
+        settings.switchAtFablePercent = defaultFable
+        let preferences = AccountPreferences(
+            sessionLimit: nil, weeklyLimit: accountWeekly, fableLimit: accountFable, allowsAutoSwitch: true)
+        #expect(settings.limits(for: preferences).fable == expected)
+    }
+}
+
+@Suite("Current pace")
+struct CurrentPaceTests {
+    @Test("Fable climbing while the other windows hold still is measured")
+    func fableClimbAloneIsMeasured() {
+        let resetsAt = UsageFixture.daysFromNow(3)
+        func reading(fable: Int) -> UsageReading {
+            UsageReading(
+                sessionPercent: nil, sessionResetsAt: nil,
+                weeklyPercent: 40, weeklyResetsAt: resetsAt,
+                fablePercent: fable, fableResetsAt: resetsAt)
+        }
+        var history = UsageHistory.empty
+        history.record(reading(fable: 10), for: "account", at: UsageFixture.minutesFromNow(-20))
+        history.record(reading(fable: 15), for: "account", at: UsageFixture.minutesFromNow(-10))
+        history.record(reading(fable: 20), for: "account", at: now)
+        // Ten points in twenty minutes.
+        #expect(history.currentPace(for: "account", at: now)?.fablePerHour == 30)
+    }
+}

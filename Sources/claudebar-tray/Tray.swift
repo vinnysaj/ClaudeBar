@@ -83,10 +83,7 @@ final class Tray {
         let now = Date()
         let active = self.status?.engine.snapshot?.displays.first(where: \.isActive)
         let usage = active?.usage
-        let paints = UsageIcon.paints(
-            sessionUsed: usage?.session.map { Double($0.effectiveUsedPercent(at: now)) },
-            weeklyUsed: usage?.weekly.map { Double($0.effectiveUsedPercent(at: now)) },
-            stale: usage == nil || active?.isStale == true)
+        let paints = UsageIcon.paints(usage: usage, stale: usage == nil || active?.isStale == true, now: now)
         // Ubuntu's top bar is dark in light and dark themes alike.
         let svg = UsageIcon.svg(paints, color: "#ffffff")
         guard svg != self.iconSVG else { return }

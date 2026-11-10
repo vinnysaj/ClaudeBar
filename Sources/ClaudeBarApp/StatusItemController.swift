@@ -29,7 +29,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.menu.autoenablesItems = false
         self.model.launchAtLogin = SMAppService.mainApp.status == .enabled
 
-        self.setIcon(sessionUsed: nil, weeklyUsed: nil, stale: true)
+        self.applyIcon()
         self.rebuildMenuIfNeeded()
         self.observeTask = Task { [weak self] in
             for await state in await Engine.shared.updates() {
@@ -130,26 +130,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func setIcon(sessionUsed: Double?, weeklyUsed: Double?, stale: Bool) {
-        self.statusItem.button?.image = IconRenderer.makeIcon(
-            sessionUsed: sessionUsed,
-            weeklyUsed: weeklyUsed,
-            stale: stale)
-    }
-
     /// Icon reflects the ACTIVE account only.
     private func applyIcon() {
-        guard let active = self.model.snapshot?.displays.first(where: \.isActive),
-              let usage = active.usage
-        else {
-            self.setIcon(sessionUsed: nil, weeklyUsed: nil, stale: true)
-            return
-        }
-        let now = Date()
-        self.setIcon(
-            sessionUsed: usage.session.map { Double($0.effectiveUsedPercent(at: now)) },
-            weeklyUsed: usage.weekly.map { Double($0.effectiveUsedPercent(at: now)) },
-            stale: active.isStale)
+        let active = self.model.snapshot?.displays.first(where: \.isActive)
+        let usage = active?.usage
+        self.statusItem.button?.image = IconRenderer.makeIcon(
+            UsageIcon.paints(usage: usage, stale: usage == nil || active?.isStale == true, now: Date()))
     }
 
     /// Shows what the engine reports. A sign-in started from the panel also gets

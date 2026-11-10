@@ -9,16 +9,24 @@ public struct UsageReading: Sendable, Codable, Equatable {
     public var sessionResetsAt: Date?
     public var weeklyPercent: Int?
     public var weeklyResetsAt: Date?
+    public var fablePercent: Int?
+    public var fableResetsAt: Date?
 
     /// Reset times from the API can drift by a few seconds between fetches of
     /// the same window; anything closer than this is the same reset.
     public static let resetTolerance: TimeInterval = 5 * 60
 
-    public init(sessionPercent: Int?, sessionResetsAt: Date?, weeklyPercent: Int?, weeklyResetsAt: Date?) {
+    public init(
+        sessionPercent: Int?, sessionResetsAt: Date?,
+        weeklyPercent: Int?, weeklyResetsAt: Date?,
+        fablePercent: Int?, fableResetsAt: Date?)
+    {
         self.sessionPercent = sessionPercent
         self.sessionResetsAt = sessionResetsAt
         self.weeklyPercent = weeklyPercent
         self.weeklyResetsAt = weeklyResetsAt
+        self.fablePercent = fablePercent
+        self.fableResetsAt = fableResetsAt
     }
 
     public init(usage: AccountUsage) {
@@ -26,15 +34,17 @@ public struct UsageReading: Sendable, Codable, Equatable {
             sessionPercent: usage.session?.usedPercent,
             sessionResetsAt: usage.session?.resetsAt,
             weeklyPercent: usage.weekly?.usedPercent,
-            weeklyResetsAt: usage.weekly?.resetsAt)
+            weeklyResetsAt: usage.weekly?.resetsAt,
+            fablePercent: usage.fable?.usedPercent,
+            fableResetsAt: usage.fable?.resetsAt)
     }
 
     /// The same figures in the same windows.
     public func matches(_ other: UsageReading) -> Bool {
-        self.sessionPercent == other.sessionPercent
-            && self.weeklyPercent == other.weeklyPercent
-            && Self.sameReset(self.sessionResetsAt, other.sessionResetsAt)
-            && Self.sameReset(self.weeklyResetsAt, other.weeklyResetsAt)
+        UsageWindow.allCases.allSatisfy { window in
+            window.percent(in: self) == window.percent(in: other)
+                && Self.sameReset(window.resetsAt(in: self), window.resetsAt(in: other))
+        }
     }
 
     public static func sameReset(_ lhs: Date?, _ rhs: Date?) -> Bool {
@@ -50,6 +60,8 @@ public struct UsageReading: Sendable, Codable, Equatable {
         case sessionResetsAt = "sr"
         case weeklyPercent = "w"
         case weeklyResetsAt = "wr"
+        case fablePercent = "fa"
+        case fableResetsAt = "far"
     }
 }
 
@@ -57,11 +69,15 @@ public struct UsageReading: Sendable, Codable, Equatable {
 public enum UsageWindow: Sendable, CaseIterable {
     case session
     case weekly
+    /// The weekly window scoped to Fable, a share of the weekly allowance:
+    /// Fable work counts toward both.
+    case fable
 
     public func percent(in reading: UsageReading) -> Int? {
         switch self {
         case .session: return reading.sessionPercent
         case .weekly: return reading.weeklyPercent
+        case .fable: return reading.fablePercent
         }
     }
 
@@ -69,6 +85,7 @@ public enum UsageWindow: Sendable, CaseIterable {
         switch self {
         case .session: return reading.sessionResetsAt
         case .weekly: return reading.weeklyResetsAt
+        case .fable: return reading.fableResetsAt
         }
     }
 
@@ -116,11 +133,13 @@ public struct UsagePoint: Sendable, Codable, Equatable {
 public struct CurrentPace: Sendable, Codable, Equatable {
     public let sessionPerHour: Double?
     public let weeklyPerHour: Double?
+    public let fablePerHour: Double?
 
     public func perHour(_ window: UsageWindow) -> Double? {
         switch window {
         case .session: return self.sessionPerHour
         case .weekly: return self.weeklyPerHour
+        case .fable: return self.fablePerHour
         }
     }
 }
@@ -179,7 +198,8 @@ public struct UsageHistory: Sendable, Codable {
         guard !runs.isEmpty else { return nil }
         return CurrentPace(
             sessionPerHour: Self.recentSlope(runs, window: .session, now: now),
-            weeklyPerHour: Self.recentSlope(runs, window: .weekly, now: now))
+            weeklyPerHour: Self.recentSlope(runs, window: .weekly, now: now),
+            fablePerHour: Self.recentSlope(runs, window: .fable, now: now))
     }
 
     private static func recentSlope(_ runs: [UsageRun], window: UsageWindow, now: Date) -> Double? {
