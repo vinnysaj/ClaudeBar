@@ -17,7 +17,8 @@ struct ConfigCommand: AsyncParsableCommand {
                   Default weekly limit: \(SettingsChange.list(UsageSettings.weeklyPercentChoices)).
               fable-limit <percent>|weekly
                   Default Fable limit, the same choices, or weekly to follow each account's
-                  weekly limit. At it, the login moves to an account with Fable left.
+                  weekly limit. At it, while a claude session on this machine is on Fable,
+                  the login moves to an account with Fable left.
               refresh-interval <minutes>
                   Time between usage fetches: \(SettingsChange.list(UsageSettings.refreshIntervalChoices.map { Int($0 / 60) })).
               work-days <days>

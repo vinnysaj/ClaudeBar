@@ -32,41 +32,12 @@ final class CostScanner: Sendable {
     /// doesn't cover land in the snapshot's `unpricedModels` with their tokens
     /// counted but no cost attributed.
     func scan(pricing: PricingTable) -> CostSnapshot {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let roots = [
-            home.appendingPathComponent(".config/claude/projects"),
-            home.appendingPathComponent(".claude/projects"),
-        ]
-
         let now = Date()
         let calendar = Calendar.current
         let windowStart = CostSnapshot.windowStart(now: now, calendar: calendar)
 
         var cache = CostCache.load(version: CostCache.version(pricing: pricing, timeZone: calendar.timeZone))
-        var allFiles: [(url: URL, size: Int64, mtimeMs: Int64)] = []
-
-        for root in roots {
-            guard let enumerator = FileManager.default.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants])
-            else { continue }
-
-            for case let url as URL in enumerator {
-                guard url.pathExtension.lowercased() == "jsonl" else { continue }
-                guard let values = try? url.resourceValues(
-                    forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
-                else { continue }
-                guard values.isRegularFile == true else { continue }
-                let size = Int64(values.fileSize ?? 0)
-                if size <= 0 { continue }
-                // Logs only ever grow by appending, so a file last written before
-                // the window holds nothing in it. Most logs on disk are that old;
-                // reading them anyway turns a cold scan into minutes.
-                guard let modifiedAt = values.contentModificationDate, modifiedAt >= windowStart else { continue }
-                allFiles.append((url: url, size: size, mtimeMs: Int64(modifiedAt.timeIntervalSince1970 * 1000)))
-            }
-        }
+        let allFiles = ClaudeCodeLogs.files(modifiedSince: windowStart)
 
         let totalFiles = allFiles.count
         self.reportProgress(scanned: 0, total: totalFiles, isComplete: false)
@@ -77,12 +48,13 @@ final class CostScanner: Sendable {
 
         for (index, file) in allFiles.enumerated() {
             let path = file.url.path
+            let mtimeMs = Int64(file.modifiedAt.timeIntervalSince1970 * 1000)
             touchedPaths.insert(path)
 
             let fileHours: [HourlyUsage]
             let wasCached: Bool
             if let cached = cache.files[path],
-               cached.mtimeMs == file.mtimeMs,
+               cached.mtimeMs == mtimeMs,
                cached.size == file.size
             {
                 fileHours = cached.hours
@@ -94,7 +66,7 @@ final class CostScanner: Sendable {
                     since: windowStart,
                     calendar: calendar,
                     seenKeys: &seenMessageKeys)
-                cache.files[path] = CachedFile(mtimeMs: file.mtimeMs, size: file.size, hours: fileHours)
+                cache.files[path] = CachedFile(mtimeMs: mtimeMs, size: file.size, hours: fileHours)
                 wasCached = false
             }
 
@@ -150,7 +122,7 @@ final class CostScanner: Sendable {
             else { continue }
 
             guard let timestamp = obj["timestamp"] as? String,
-                  let loggedAt = Self.date(fromTimestamp: timestamp),
+                  let loggedAt = ClaudeCodeLogs.date(fromTimestamp: timestamp),
                   loggedAt >= since,
                   let hourStart = calendar.dateInterval(of: .hour, for: loggedAt)?.start
             else { continue }
@@ -231,16 +203,6 @@ final class CostScanner: Sendable {
     }
 
     // MARK: - Helpers
-
-    private static let timestampWithFraction = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
-
-    /// Log timestamps are ISO 8601 in UTC, normally with milliseconds.
-    private static func date(fromTimestamp timestamp: String) -> Date? {
-        if let date = try? Date(timestamp, strategy: Self.timestampWithFraction) {
-            return date
-        }
-        return try? Date(timestamp, strategy: .iso8601)
-    }
 
     private static func intValue(_ value: Any?) -> Int {
         if let number = value as? NSNumber { return number.intValue }

@@ -242,7 +242,7 @@ struct AccountDetailView: View {
                 set: { isOn in self.update(display) { $0.allowsAutoSwitch = isOn } }))
                 .toggleStyle(.checkbox)
                 .font(.system(size: 11))
-            Text("Auto-switching moves off this account at its session or weekly limit and won't move onto it near one. At its Fable limit, it moves to an account with Fable left. Whatever is left above a limit stays free for claude.ai.")
+            Text("Auto-switching moves off this account at its session or weekly limit and won't move onto it near one. At its Fable limit, while a claude session on this Mac is on Fable, it moves to an account with Fable left. Whatever is left above a limit stays free for claude.ai.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -214,6 +214,8 @@ public actor Engine {
         self.publish()
 
         await self.accounts.reconcile()
+        let fableInUse = await Task.detached { FableActivity.isInUse(now: Date()) }.value
+        await self.accounts.setFableInUse(fableInUse)
         await self.accounts.refreshUsage(force: force)
         await self.accounts.autoSwitchIfNeeded()
         await self.publishSnapshot()

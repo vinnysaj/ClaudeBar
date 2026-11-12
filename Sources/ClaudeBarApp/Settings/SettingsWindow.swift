@@ -234,7 +234,7 @@ struct SettingsView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Accounts with Fable left come first, so a long Fable run moves from one account's Fable to the next. At its Fable limit an account hands over only to one with Fable left; once every account's Fable is spent, switching goes by the other limits alone.")
+            Text("While a claude session on this Mac is on Fable, accounts with Fable left come first, so a long Fable run moves from one account's Fable to the next. At its Fable limit an account hands over only to one with Fable left; once every account's Fable is spent, switching goes by the other limits alone. With no Fable session here, the Fable limit is ignored.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

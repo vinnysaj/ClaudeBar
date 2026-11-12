@@ -3,6 +3,12 @@ import Foundation
 /// Decides which account should carry the live login. Pure functions over
 /// snapshots, so the policy is testable without keychains or network, and the
 /// forecaster can replay it against simulated usage.
+///
+/// `fableInUse` says whether Claude Code on this machine is running Fable work.
+/// The Fable limit stops only Fable work, so without any here it is no reason
+/// to move the login and Fable room no reason to prefer an account. Another
+/// machine signed into the same accounts moves their Fable usage all the same,
+/// which is why usage alone can't decide it.
 public enum AutoSwitchPlanner {
     /// Session room, in points below its limit, a candidate needs to be worth
     /// moving to at all; with less it would hand the login on within minutes.
@@ -72,16 +78,16 @@ public enum AutoSwitchPlanner {
             && candidate.room(.weekly) >= Self.minimumWeeklyRoom
     }
 
-    /// Accounts that could take over, best first: Fable room beats none, so a
-    /// long Fable run moves from one account's Fable to the next; then
-    /// comfortable session room beats little, then the soonest weekly reset
-    /// (capacity that expires first is the least valuable to hoard), then the
-    /// roomier session, then roster order.
-    public static func rank(_ candidates: [Candidate]) -> [Candidate] {
+    /// Accounts that could take over, best first: while Fable is in use, Fable
+    /// room beats none, so a long Fable run moves from one account's Fable to
+    /// the next; then comfortable session room beats little, then the soonest
+    /// weekly reset (capacity that expires first is the least valuable to
+    /// hoard), then the roomier session, then roster order.
+    public static func rank(_ candidates: [Candidate], fableInUse: Bool) -> [Candidate] {
         candidates
             .filter(Self.canTakeOver)
             .sorted { lhs, rhs in
-                if lhs.hasFableRoom != rhs.hasFableRoom { return lhs.hasFableRoom }
+                if fableInUse, lhs.hasFableRoom != rhs.hasFableRoom { return lhs.hasFableRoom }
                 let lhsComfortable = lhs.room(.session) >= Self.comfortableSessionRoom
                 let rhsComfortable = rhs.room(.session) >= Self.comfortableSessionRoom
                 if lhsComfortable != rhsComfortable { return lhsComfortable }
@@ -96,17 +102,21 @@ public enum AutoSwitchPlanner {
     }
 
     /// Non-active accounts that could take over, best first.
-    public static func rankedCandidates(_ displays: [AccountDisplay], now: Date) -> [AccountDisplay] {
+    public static func rankedCandidates(_ displays: [AccountDisplay], fableInUse: Bool, now: Date) -> [AccountDisplay] {
         let displaysById = Dictionary(displays.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return Self.rank(displays.filter { !$0.isActive }.map { Candidate(display: $0, now: now) })
+        return Self.rank(
+            displays.filter { !$0.isActive }.map { Candidate(display: $0, now: now) }, fableInUse: fableInUse)
             .compactMap { displaysById[$0.id] }
     }
 
     /// Why the active account should hand the login over now, or nil while it
     /// has room. It hands over at any limit, or before one when its usage is
     /// climbing fast enough to cross it within `lookahead`. Session and weekly
-    /// come first: they stop all work, where the Fable limit stops only Fable.
-    public static func reliefReason(for active: Candidate, pace: CurrentPace?, lookahead: TimeInterval) -> SwitchReason? {
+    /// come first: they stop all work, where the Fable limit stops only Fable,
+    /// and counts only while Fable is in use.
+    public static func reliefReason(
+        for active: Candidate, pace: CurrentPace?, fableInUse: Bool, lookahead: TimeInterval) -> SwitchReason?
+    {
         let session = Int(active.sessionPercent.rounded())
         let weekly = Int(active.weeklyPercent.rounded())
         let fable = Int(active.fablePercent.rounded())
@@ -122,6 +132,7 @@ public enum AutoSwitchPlanner {
         if Self.growth(pace?.weeklyPerHour, over: lookahead) >= active.room(.weekly) {
             return .weeklyClimbing(percent: weekly, limit: active.limits.weekly)
         }
+        guard fableInUse else { return nil }
         if active.room(.fable) <= 0 {
             return .fableAtLimit(percent: fable, limit: active.limits.fable)
         }
@@ -135,6 +146,7 @@ public enum AutoSwitchPlanner {
         displays: [AccountDisplay],
         settings: UsageSettings,
         activePace: CurrentPace?,
+        fableInUse: Bool,
         lastManualSwitchAt: Date?,
         now: Date) -> Decision
     {
@@ -149,14 +161,15 @@ public enum AutoSwitchPlanner {
         let active = Candidate(display: activeDisplay, now: now)
         // A switch only happens at a check, so anything that would cross a limit
         // before the check after this one has to move now.
-        let lookahead = Self.activeRefreshInterval(active: active, pace: activePace, settings: settings)
+        let lookahead = Self.activeRefreshInterval(
+            active: active, pace: activePace, fableInUse: fableInUse, settings: settings)
             + Self.pollingTick
-        guard let reason = Self.reliefReason(for: active, pace: activePace, lookahead: lookahead) else {
-            return .stay
-        }
+        guard let reason = Self.reliefReason(
+            for: active, pace: activePace, fableInUse: fableInUse, lookahead: lookahead)
+        else { return .stay }
         // Fable room ranks first, so if the best has none, no account has any,
         // and moving for Fable's sake would gain nothing.
-        guard let best = Self.rankedCandidates(displays, now: now).first,
+        guard let best = Self.rankedCandidates(displays, fableInUse: fableInUse, now: now).first,
               reason.window != .fable || Candidate(display: best, now: now).hasFableRoom
         else {
             return .noCandidate(reason: reason)
@@ -166,11 +179,14 @@ public enum AutoSwitchPlanner {
 
     /// How long the active account's usage can go unchecked. Without
     /// auto-switching or a measurable climb this is the base interval; otherwise
-    /// it shrinks so the nearest limit, Fable's included, is seen coming at
-    /// least two polls ahead.
-    public static func activeRefreshInterval(active: Candidate?, pace: CurrentPace?, settings: UsageSettings) -> TimeInterval {
+    /// it shrinks so the nearest limit, Fable's while Fable is in use, is seen
+    /// coming at least two polls ahead.
+    public static func activeRefreshInterval(
+        active: Candidate?, pace: CurrentPace?, fableInUse: Bool, settings: UsageSettings) -> TimeInterval
+    {
         guard settings.autoSwitchEnabled, let active else { return settings.refreshInterval }
         let secondsToLimit = UsageWindow.allCases
+            .filter { fableInUse || $0 != .fable }
             .compactMap { window -> TimeInterval? in
                 guard let rate = pace?.perHour(window), rate > 0 else { return nil }
                 return max(0, active.room(window)) / rate * 3600

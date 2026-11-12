@@ -37,6 +37,9 @@ actor AccountManager {
     /// — including across restarts, since fetch times persist with the cache.
     private var settings: UsageSettings
     private var lastManualSwitchAt: Date?
+    /// Whether Claude Code on this machine was running Fable work at the last
+    /// check. Auto-switching follows the Fable limit only while it is.
+    private var fableInUse = false
     /// Every reading fetched, for pace and forecasts. Rewritten whole on save, so
     /// saves are spaced out; quitting between two loses at most that much.
     private var history: UsageHistory
@@ -122,7 +125,8 @@ actor AccountManager {
                 limits: self.settings.limits(for: account.preferences),
                 insight: nil)
         }
-        let recommendedId = AutoSwitchPlanner.rankedCandidates(displays, now: now).first?.id
+        let recommendedId = AutoSwitchPlanner.rankedCandidates(displays, fableInUse: self.fableInUse, now: now)
+            .first?.id
         if let index = displays.firstIndex(where: { $0.id == recommendedId }) {
             displays[index].isRecommended = true
         }
@@ -622,6 +626,12 @@ actor AccountManager {
         self.settings = settings
     }
 
+    func setFableInUse(_ fableInUse: Bool) {
+        guard fableInUse != self.fableInUse else { return }
+        self.fableInUse = fableInUse
+        self.logger.info("Fable work on this machine \(fableInUse ? "started" : "stopped", privacy: .public)")
+    }
+
     /// Moves the live login off an account that is at, or racing toward, its
     /// limits. Runs after every usage refresh; the planner decides.
     func autoSwitchIfNeeded() async {
@@ -673,6 +683,7 @@ actor AccountManager {
             displays: self.displays(now: now),
             settings: self.settings,
             activePace: self.state.activeAccountUuid.flatMap { self.history.currentPace(for: $0, at: now) },
+            fableInUse: self.fableInUse,
             lastManualSwitchAt: self.lastManualSwitchAt,
             now: now)
     }
@@ -738,6 +749,7 @@ actor AccountManager {
             interval = AutoSwitchPlanner.activeRefreshInterval(
                 active: AutoSwitchPlanner.Candidate(display: display, now: now),
                 pace: self.history.currentPace(for: account.id, at: now),
+                fableInUse: self.fableInUse,
                 settings: self.settings)
         } else {
             interval = self.settings.refreshInterval + TimeInterval(position * 60)

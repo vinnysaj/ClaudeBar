@@ -59,8 +59,9 @@ struct LimitsCommand: AsyncParsableCommand {
         abstract: "Show or set the limits one account is held to.",
         discussion: """
             An account stops taking work at its session or weekly limit, and auto-switching \
-            moves the login to the next account. At its Fable limit, the login moves to an \
-            account with Fable left. A weekly limit below 100% keeps the rest for claude.ai. \
+            moves the login to the next account. At its Fable limit, while a claude session \
+            on this machine is on Fable, the login moves to an account with Fable left. A \
+            weekly limit below 100% keeps the rest for claude.ai. \
             Without options, shows the account's limits.
             """)
 

@@ -5,8 +5,8 @@ import Testing
 private let now = UsageFixture.now
 
 /// Ids of the accounts that could take the login over, best first.
-private func rankedIds(_ displays: [AccountDisplay]) -> [String] {
-    AutoSwitchPlanner.rankedCandidates(displays, now: now).map(\.id)
+private func rankedIds(_ displays: [AccountDisplay], fableInUse: Bool = false) -> [String] {
+    AutoSwitchPlanner.rankedCandidates(displays, fableInUse: fableInUse, now: now).map(\.id)
 }
 
 @Suite("Taking over")
@@ -72,9 +72,14 @@ struct AutoSwitchRankingTests {
     }
 
     @Test(
-        "Three points of Fable room outrank comfortable session room and a sooner weekly reset; two do not",
-        arguments: [(fablePercent: 92, expected: ["fableLeft", "fableSpent"]), (93, ["fableSpent", "fableLeft"])])
-    func fableRoomRanksFirst(fablePercent: Int, expected: [String]) {
+        "With Fable work here, three points of Fable room outrank comfortable session room and a sooner weekly reset; two do not",
+        arguments: [
+            (fablePercent: 92, fableInUse: true, expected: ["fableLeft", "fableSpent"]),
+            (93, true, ["fableSpent", "fableLeft"]),
+            // Without Fable work here, Fable room counts for nothing.
+            (0, false, ["fableSpent", "fableLeft"]),
+        ])
+    func fableRoomRanksFirst(fablePercent: Int, fableInUse: Bool, expected: [String]) {
         // Seventy-five of a ninety session limit leaves fifteen points, short of comfortable.
         let displays = [
             UsageFixture.display(
@@ -85,7 +90,7 @@ struct AutoSwitchRankingTests {
                 weeklyResetsAt: UsageFixture.daysFromNow(6),
                 fablePercent: fablePercent),
         ]
-        #expect(rankedIds(displays) == expected)
+        #expect(rankedIds(displays, fableInUse: fableInUse) == expected)
     }
 
     @Test("Comfortable session room beats a sooner weekly reset")
@@ -182,12 +187,14 @@ struct AutoSwitchDecisionTests {
         _ displays: [AccountDisplay],
         settings: UsageSettings = UsageFixture.settings(),
         activePace: CurrentPace? = nil,
+        fableInUse: Bool = false,
         lastManualSwitchAt: Date? = nil) -> AutoSwitchPlanner.Decision
     {
         AutoSwitchPlanner.decide(
             displays: displays,
             settings: settings,
             activePace: activePace,
+            fableInUse: fableInUse,
             lastManualSwitchAt: lastManualSwitchAt,
             now: now)
     }
@@ -259,7 +266,24 @@ struct AutoSwitchDecisionTests {
                 fableResetsAt: fableResetsAt),
         ]
         #expect(
-            self.decide(displays) == .switchTo(accountId: "fableLeft", reason: .fableAtLimit(percent: 95, limit: 95)))
+            self.decide(displays, fableInUse: true)
+                == .switchTo(accountId: "fableLeft", reason: .fableAtLimit(percent: 95, limit: 95)))
+    }
+
+    @Test(
+        "Without Fable work here, Fable at or climbing into its limit leaves the login where it is",
+        arguments: [
+            (fablePercent: 100, pace: nil as CurrentPace?),
+            // Five points to go at ten a minute is half a minute away.
+            (90, CurrentPace(sessionPerHour: nil, weeklyPerHour: nil, fablePerHour: 600)),
+        ])
+    func fableLimitIgnoredWithoutFableWork(fablePercent: Int, pace: CurrentPace?) {
+        let displays = [
+            UsageFixture.display(
+                id: "active", sessionPercent: nil, weeklyPercent: 50, fablePercent: fablePercent, isActive: true),
+            UsageFixture.display(id: "fableLeft", sessionPercent: nil, fablePercent: 0),
+        ]
+        #expect(self.decide(displays, activePace: pace, fableInUse: false) == .stay)
     }
 
     @Test(
@@ -274,7 +298,7 @@ struct AutoSwitchDecisionTests {
                 id: "active", sessionPercent: nil, weeklyPercent: weeklyPercent, fablePercent: 95, isActive: true),
             UsageFixture.display(id: "fableSpent", sessionPercent: nil, fablePercent: 100),
         ]
-        #expect(self.decide(displays) == expected)
+        #expect(self.decide(displays, fableInUse: true) == expected)
     }
 
     @Test("Fable climbing into its limit before the next check moves the login early")
@@ -285,7 +309,9 @@ struct AutoSwitchDecisionTests {
             UsageFixture.display(id: "fableLeft", sessionPercent: nil, fablePercent: 0),
         ]
         let decision = self.decide(
-            displays, activePace: CurrentPace(sessionPerHour: nil, weeklyPerHour: nil, fablePerHour: 600))
+            displays,
+            activePace: CurrentPace(sessionPerHour: nil, weeklyPerHour: nil, fablePerHour: 600),
+            fableInUse: true)
         #expect(
             decision == .switchTo(accountId: "fableLeft", reason: .fableClimbing(percent: 90, limit: 95)))
     }
@@ -347,14 +373,21 @@ struct AutoSwitchPacingTests {
     private func interval(
         sessionPercent: Int,
         weeklyPercent: Int = 0,
+        fablePercent: Int = 0,
         pace: CurrentPace?,
+        fableInUse: Bool = false,
         autoSwitchEnabled: Bool = true) -> TimeInterval
     {
         let active = UsageFixture.display(
-            id: "active", sessionPercent: sessionPercent, weeklyPercent: weeklyPercent, isActive: true)
+            id: "active",
+            sessionPercent: sessionPercent,
+            weeklyPercent: weeklyPercent,
+            fablePercent: fablePercent,
+            isActive: true)
         return AutoSwitchPlanner.activeRefreshInterval(
             active: AutoSwitchPlanner.Candidate(display: active, now: now),
             pace: pace,
+            fableInUse: fableInUse,
             settings: UsageFixture.settings(
                 refreshInterval: self.baseInterval, autoSwitchEnabled: autoSwitchEnabled))
     }
@@ -395,6 +428,17 @@ struct AutoSwitchPacingTests {
         let interval = self.interval(
             sessionPercent: sessionPercent, weeklyPercent: weeklyPercent, pace: pace)
         #expect(interval == 225)
+    }
+
+    @Test("A climbing Fable limit is polled toward only while Fable work runs here", arguments: [true, false])
+    func fableLimitPollsOnlyWithFableWork(fableInUse: Bool) {
+        // Five Fable points to go at forty an hour is 450 seconds; the other limits aren't moving.
+        let interval = self.interval(
+            sessionPercent: 0,
+            fablePercent: 90,
+            pace: CurrentPace(sessionPerHour: nil, weeklyPerHour: nil, fablePerHour: 40),
+            fableInUse: fableInUse)
+        #expect(interval == (fableInUse ? 225 : self.baseInterval))
     }
 
     @Test(

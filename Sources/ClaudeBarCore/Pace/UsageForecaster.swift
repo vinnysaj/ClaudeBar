@@ -180,7 +180,7 @@ public enum UsageForecaster {
             let candidates = self.accounts.indices
                 .filter { $0 != self.activeIndex }
                 .map { self.accounts[$0].candidate }
-            guard let best = AutoSwitchPlanner.rank(candidates).first else { return nil }
+            guard let best = AutoSwitchPlanner.rank(candidates, fableInUse: false).first else { return nil }
             return self.accounts.firstIndex { $0.id == best.id }
         }
     }
